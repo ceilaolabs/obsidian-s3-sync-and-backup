@@ -6,7 +6,7 @@
 **Plugin ID:** obsidian-s3-sync-and-backup  
 **Repository:** github.com/ceilaolabs/obsidian-s3-sync-and-backup 
 **Version:** 1.0.0  
-**Author:** Sathindu  
+**Author:** CeilaoLabs  
 **Last Updated:** December 2025
 
 ### Vision
