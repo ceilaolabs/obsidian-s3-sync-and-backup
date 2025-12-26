@@ -1,0 +1,77 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Create Release PR
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          release-type: node
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-publish:
+    name: Build and Publish Release
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Production Bundle
+        run: npm run build
+
+      - name: Verify Build Artifacts
+        run: |
+          if [ ! -f main.js ]; then
+            echo "[X] main.js not found"
+            exit 1
+          fi
+          if [ ! -f manifest.json ]; then
+            echo "[X] manifest.json not found"
+            exit 1
+          fi
+          if [ ! -f styles.css ]; then
+            echo "[X] styles.css not found"
+            exit 1
+          fi
+          echo "[✓] All release artifacts present"
+
+      - name: Upload Release Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+            main.js \
+            manifest.json \
+            styles.css \
+            --clobber
+
+      - name: Verify Release
+        run: |
+          echo "✅ Release ${{ needs.release-please.outputs.tag_name }} published successfully"
+          echo "📦 Uploaded files: main.js, manifest.json, styles.css"
