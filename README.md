@@ -1,90 +1,210 @@
-# Obsidian Sample Plugin
+# Obsidian S3 Sync & Backup
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Bi-directional vault synchronization and scheduled backups for Obsidian with S3-compatible storage and optional end-to-end encryption.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Obsidian](https://img.shields.io/badge/Obsidian-1.4.0+-purple.svg)
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## Features
 
-## First time developing plugins?
+- **🔄 Bi-directional Sync** — Keep your vault synchronized across devices via S3
+- **☁️ S3-Compatible Storage** — Works with AWS S3, Cloudflare R2, MinIO, and custom endpoints
+- **🔐 End-to-End Encryption** — Optional AES encryption with Argon2id key derivation
+- **💾 Scheduled Backups** — Automatic backup snapshots with configurable intervals
+- **⚡ Smart Conflict Resolution** — Automatic LOCAL_/REMOTE_ file creation for conflicts
+- **📊 Status Bar Integration** — Real-time sync and backup status at a glance
+- **🎛️ Flexible Retention** — Keep backups by days or number of copies
 
-Quick starting guide for new plugin devs:
+## Supported Providers
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+| Provider | Status |
+|----------|--------|
+| AWS S3 | ✅ Supported |
+| Cloudflare R2 | ✅ Supported |
+| MinIO | ✅ Supported |
+| Custom S3-Compatible | ✅ Supported |
 
-## Releasing new releases
+## Installation
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+### From Community Plugins (Coming Soon)
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+1. Open **Settings** → **Community plugins**
+2. Search for "S3 Sync & Backup"
+3. Click **Install** then **Enable**
 
-## Adding your plugin to the community plugin list
+### Manual Installation
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/releases)
+2. Create folder `<vault>/.obsidian/plugins/obsidian-s3-sync-and-backup/`
+3. Copy the downloaded files into this folder
+4. Enable the plugin in **Settings** → **Community plugins**
 
-## How to use
+## Quick Start
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+### 1. Configure S3 Connection
 
-## Manually installing the plugin
+1. Open **Settings** → **S3 Sync & Backup**
+2. Select your provider (AWS S3, Cloudflare R2, MinIO, or Custom)
+3. Enter your credentials:
+   - **Endpoint URL** (for R2/MinIO/Custom)
+   - **Region** (use `auto` for Cloudflare R2)
+   - **Bucket name**
+   - **Access Key ID**
+   - **Secret Access Key**
+4. Click **Test Connection** to verify
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+### 2. Enable Sync
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+1. Toggle **Enable Sync** in the Sync section
+2. Configure sync interval (1–30 minutes)
+3. Optionally enable **Sync on Startup**
 
-## Funding URL
+### 3. Enable Backups (Optional)
 
-You can include funding URLs where people who use your plugin can financially support it.
+1. Toggle **Enable Backups** in the Backup section
+2. Set backup interval (hourly to weekly)
+3. Configure retention policy (by days or copies)
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+### 4. Enable Encryption (Optional)
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+> ⚠️ **Important**: If you lose your passphrase, your data cannot be recovered!
+
+1. Toggle **Enable End-to-End Encryption**
+2. Enter a strong passphrase (12+ characters recommended)
+3. The same passphrase must be used on all devices
+
+## S3 Bucket Structure
+
+```
+your-bucket/
+├── vault/                          # Synced vault files
+│   ├── Notes/
+│   │   └── my-note.md
+│   └── .obsidian-s3-sync/
+│       └── .vault.enc              # Encryption marker (if enabled)
+└── backups/                        # Backup snapshots
+    └── backup-2024-12-25T14-30-00/
+        ├── .backup-manifest.json
+        └── Notes/
+            └── my-note.md
 ```
 
-If you have multiple URLs, you can also do:
+## Commands
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+Access these via the Command Palette (`Ctrl/Cmd + P`):
+
+| Command | Description |
+|---------|-------------|
+| **Sync now** | Trigger immediate sync |
+| **Backup now** | Create backup snapshot |
+| **Pause sync** | Pause automatic sync |
+| **Resume sync** | Resume automatic sync |
+| **Open settings** | Open plugin settings |
+
+## Conflict Resolution
+
+When the same file is modified on multiple devices while offline, a conflict occurs. The plugin handles this by:
+
+1. Renaming the local version to `LOCAL_filename.md`
+2. Downloading the remote version as `REMOTE_filename.md`
+3. Showing a notification to alert you
+
+You can then manually merge the changes and delete the conflict files.
+
+## Security
+
+### Encryption Details
+
+- **Algorithm**: XSalsa20-Poly1305 (via TweetNaCl)
+- **Key Derivation**: Argon2id with OWASP-recommended parameters
+- **File Hashing**: SHA-256
+
+### Best Practices
+
+- Use a strong, unique passphrase
+- Store your passphrase securely (password manager)
+- Keep local backups of critical data
+- Use IAM policies to limit S3 access
+
+## Development
+
+### Prerequisites
+
+- Node.js 18+
+- npm
+
+### Setup
+
+```bash
+git clone https://github.com/ceilaolabs/obsidian-s3-sync-and-backup.git
+cd obsidian-s3-sync-and-backup
+npm install
 ```
 
-## API Documentation
+### Build
 
-See https://docs.obsidian.md
+```bash
+npm run build       # Production build
+npm run dev         # Development with watch mode
+```
+
+### Lint
+
+```bash
+npm run lint
+```
+
+### Project Structure
+
+```
+src/
+├── main.ts              # Plugin entry point
+├── settings.ts          # Settings UI
+├── statusbar.ts         # Status bar component
+├── types.ts             # TypeScript interfaces
+├── storage/             # S3 operations
+├── sync/                # Sync engine & journal
+├── backup/              # Backup system
+├── crypto/              # Encryption modules
+└── utils/               # Utilities
+```
+
+## FAQ
+
+<details>
+<summary><strong>Does this work on mobile?</strong></summary>
+
+Yes! The plugin is designed to work on both desktop and mobile versions of Obsidian. However, sync on mobile may be affected by iOS/Android background restrictions.
+</details>
+
+<details>
+<summary><strong>Can I use this with Obsidian Sync?</strong></summary>
+
+It's not recommended to use both simultaneously as they may conflict. Choose one sync solution for your vault.
+</details>
+
+<details>
+<summary><strong>What happens if I forget my passphrase?</strong></summary>
+
+Your encrypted data cannot be recovered without the passphrase. Always store your passphrase securely.
+</details>
+
+<details>
+<summary><strong>How much does S3 storage cost?</strong></summary>
+
+Costs vary by provider. Cloudflare R2 offers free egress. AWS S3 charges for storage and data transfer. For a typical vault, expect $0.50–$2/month.
+</details>
+
+## Support
+
+- 🐛 [Report a bug](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues)
+- 💡 [Request a feature](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues)
+- 📖 [Documentation](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/wiki)
+
+## License
+
+MIT © [Sathindu](https://github.com/ceilaolabs)
+
+---
+
+Made with ❤️ for the Obsidian community

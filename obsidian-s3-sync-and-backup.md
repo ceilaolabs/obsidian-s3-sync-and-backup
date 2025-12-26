@@ -100,8 +100,9 @@ s3://my-bucket/
 ### 2. End-to-End Encryption
 
 **Encryption Model:**
-- **Algorithm:** XChaCha20-Poly1305 (AEAD)
-- **Key Derivation:** Argon2id from user passphrase
+- **Algorithm:** XSalsa20-Poly1305 (AEAD) via `tweetnacl` (~7KB, pure JS, audited)
+- **Key Derivation:** Argon2id from user passphrase via `hash-wasm` (~50KB)
+- **File Hashing:** SHA-256 via `hash-wasm` (same library as key derivation)
 - **Shared Key:** Same encryption key used for both sync AND backups
 
 **Key Setup Flow:**
@@ -987,4 +988,4 @@ User resolution:
 - **Retention:** Policy for automatically deleting old backups
 - **Snapshot:** Point-in-time copy of entire vault
 - **Sync Journal:** Local database tracking sync state per file
-- **XChaCha20:** Extended-nonce variant of ChaCha20 stream cipher
+- **XSalsa20:** Extended-nonce variant of Salsa20 stream cipher (provided by tweetnacl)

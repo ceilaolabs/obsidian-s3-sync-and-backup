@@ -1,99 +1,396 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+/**
+ * Obsidian S3 Sync & Backup Plugin
+ *
+ * Main plugin entry point. Provides bi-directional vault synchronization
+ * and scheduled backups with S3-compatible storage.
+ *
+ * @author Sathindu
+ * @version 1.0.0
+ */
 
-// Remember to rename these classes and interfaces!
+import { Notice, Plugin } from 'obsidian';
+import { S3SyncBackupSettings, DEFAULT_SETTINGS } from './types';
+import { S3SyncBackupSettingTab } from './settings';
+import { StatusBar } from './statusbar';
+import { S3Provider } from './storage/S3Provider';
+import { SyncJournal } from './sync/SyncJournal';
+import { ChangeTracker } from './sync/ChangeTracker';
+import { SyncEngine } from './sync/SyncEngine';
+import { SyncScheduler } from './sync/SyncScheduler';
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+/**
+ * S3SyncBackupPlugin - Main plugin class
+ *
+ * Manages plugin lifecycle, settings, and orchestrates sync/backup operations.
+ */
+export default class S3SyncBackupPlugin extends Plugin {
+	settings!: S3SyncBackupSettings;
 
-	async onload() {
+	/** S3 provider instance */
+	private s3Provider: S3Provider | null = null;
+
+	/** Status bar component */
+	private statusBar: StatusBar | null = null;
+
+	/** Sync journal for state persistence */
+	private syncJournal: SyncJournal | null = null;
+
+	/** Change tracker for vault events */
+	private changeTracker: ChangeTracker | null = null;
+
+	/** Sync engine for sync operations */
+	private syncEngine: SyncEngine | null = null;
+
+	/** Sync scheduler for periodic syncs */
+	private syncScheduler: SyncScheduler | null = null;
+
+	/**
+	 * Plugin load lifecycle hook
+	 * Called when the plugin is enabled
+	 */
+	async onload(): Promise<void> {
+		console.log('Loading S3 Sync & Backup plugin');
+
+		// Load settings
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		// Initialize S3 provider
+		this.s3Provider = new S3Provider(this.settings);
+
+		// Initialize status bar
+		this.statusBar = new StatusBar(this);
+		this.statusBar.init();
+
+		// Initialize sync journal
+		const vaultName = this.app.vault.getName();
+		this.syncJournal = new SyncJournal(vaultName);
+		await this.syncJournal.initialize();
+
+		// Initialize change tracker
+		this.changeTracker = new ChangeTracker(this.app, this.syncJournal);
+
+		// Initialize sync engine
+		this.syncEngine = new SyncEngine(
+			this.app,
+			this.s3Provider,
+			this.syncJournal,
+			this.changeTracker,
+			this.settings
+		);
+
+		// Initialize sync scheduler
+		this.syncScheduler = new SyncScheduler(this, this.syncEngine, this.settings);
+		this.syncScheduler.setCallbacks({
+			onSyncStart: () => {
+				this.statusBar?.updateSyncState({
+					status: 'syncing',
+					isSyncing: true,
+				});
+			},
+			onSyncComplete: (success, conflictCount) => {
+				this.statusBar?.updateSyncState({
+					status: conflictCount > 0 ? 'conflicts' : 'synced',
+					lastSyncTime: Date.now(),
+					isSyncing: false,
+					conflictCount,
+				});
+			},
+			onSyncError: (error) => {
+				this.statusBar?.updateSyncState({
+					status: 'error',
+					isSyncing: false,
+					lastError: error,
+				});
+			},
 		});
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+		// Update status bar based on settings
+		this.updateStatusBarFromSettings();
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
+		// Register settings tab
+		this.addSettingTab(new S3SyncBackupSettingTab(this.app, this));
+
+		// Add ribbon icon for manual sync
+		this.addRibbonIcon('refresh-cw', 'Sync with S3', async () => {
+			await this.triggerManualSync();
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
+
+		// Register commands
+		this.registerCommands();
+
+		// Start sync services if enabled
+		this.startSyncServices();
+
+		// Sync on startup if enabled
+		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
+			// Delay startup sync to let vault fully load
+			setTimeout(() => {
+				this.syncScheduler?.triggerSync('startup');
+			}, 3000);
+		}
+	}
+
+	/**
+	 * Plugin unload lifecycle hook
+	 * Called when the plugin is disabled
+	 */
+	onunload(): void {
+		console.log('Unloading S3 Sync & Backup plugin');
+
+		// Stop sync services
+		this.stopSyncServices();
+
+		// Close sync journal
+		if (this.syncJournal) {
+			this.syncJournal.close();
+			this.syncJournal = null;
+		}
+
+		// Destroy S3 provider
+		if (this.s3Provider) {
+			this.s3Provider.destroy();
+			this.s3Provider = null;
+		}
+
+		// Cleanup status bar
+		if (this.statusBar) {
+			this.statusBar.destroy();
+			this.statusBar = null;
+		}
+	}
+
+	/**
+	 * Load plugin settings from disk
+	 */
+	async loadSettings(): Promise<void> {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	}
+
+	/**
+	 * Save plugin settings to disk
+	 */
+	async saveSettings(): Promise<void> {
+		await this.saveData(this.settings);
+
+		// Update S3 provider with new settings
+		if (this.s3Provider) {
+			this.s3Provider.updateSettings(this.settings);
+		}
+
+		// Update sync engine settings
+		if (this.syncEngine) {
+			this.syncEngine.updateSettings(this.settings);
+		}
+
+		// Update sync scheduler settings
+		if (this.syncScheduler) {
+			this.syncScheduler.updateSettings(this.settings);
+		}
+	}
+
+	/**
+	 * Called when settings are changed
+	 * Updates sync services and status bar
+	 */
+	onSettingsChanged(): void {
+		this.updateStatusBarFromSettings();
+		this.restartSyncServices();
+	}
+
+	/**
+	 * Update status bar based on current settings
+	 */
+	private updateStatusBarFromSettings(): void {
+		if (!this.statusBar) return;
+
+		// Update sync status
+		if (this.settings.syncEnabled) {
+			this.statusBar.updateSyncState({
+				status: this.syncScheduler?.getIsPaused() ? 'paused' : 'synced',
+				lastSyncTime: null,
+			});
+		} else {
+			this.statusBar.updateSyncState({
+				status: 'disabled',
+			});
+		}
+
+		// Update backup status
+		if (this.settings.backupEnabled) {
+			this.statusBar.updateBackupState({
+				status: 'completed',
+				lastBackupTime: null,
+			});
+		} else {
+			this.statusBar.updateBackupState({
+				status: 'disabled',
+			});
+		}
+	}
+
+	/**
+	 * Start sync services
+	 */
+	private startSyncServices(): void {
+		if (this.settings.syncEnabled) {
+			// Start change tracking
+			this.changeTracker?.startTracking(this.settings.excludePatterns);
+
+			// Start sync scheduler
+			if (this.settings.autoSyncEnabled) {
+				this.syncScheduler?.start();
 			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
+		}
+	}
+
+	/**
+	 * Stop sync services
+	 */
+	private stopSyncServices(): void {
+		this.changeTracker?.stopTracking();
+		this.syncScheduler?.stop();
+	}
+
+	/**
+	 * Restart sync services (after settings change)
+	 */
+	private restartSyncServices(): void {
+		this.stopSyncServices();
+		this.startSyncServices();
+	}
+
+	/**
+	 * Register command palette commands
+	 */
+	private registerCommands(): void {
+		// Sync now command
 		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
+			id: 'sync-now',
+			name: 'Sync now',
+			callback: async () => {
+				await this.triggerManualSync();
+			},
+		});
+
+		// Backup now command
+		this.addCommand({
+			id: 'backup-now',
+			name: 'Backup now',
+			callback: async () => {
+				await this.triggerManualBackup();
+			},
+		});
+
+		// Pause sync command
+		this.addCommand({
+			id: 'pause-sync',
+			name: 'Pause sync',
 			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
+				if (this.settings.syncEnabled && !this.syncScheduler?.getIsPaused()) {
 					if (!checking) {
-						new SampleModal(this.app).open();
+						this.pauseSync();
 					}
-
-					// This command will only show up in Command Palette when the check function returns true
 					return true;
 				}
 				return false;
-			}
+			},
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
+		// Resume sync command
+		this.addCommand({
+			id: 'resume-sync',
+			name: 'Resume sync',
+			checkCallback: (checking: boolean) => {
+				if (this.settings.syncEnabled && this.syncScheduler?.getIsPaused()) {
+					if (!checking) {
+						this.resumeSync();
+					}
+					return true;
+				}
+				return false;
+			},
 		});
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+		// Open settings command
+		this.addCommand({
+			id: 'open-settings',
+			name: 'Open settings',
+			callback: () => {
+				// Navigate to plugin settings
+				// @ts-ignore - accessing internal API
+				this.app.setting.open();
+				// @ts-ignore
+				this.app.setting.openTabById('obsidian-s3-sync-and-backup');
+			},
+		});
 	}
 
-	onunload() {
+	/**
+	 * Trigger manual sync with user feedback
+	 */
+	async triggerManualSync(): Promise<void> {
+		if (!this.settings.syncEnabled) {
+			new Notice('Sync is disabled. Enable it in settings.');
+			return;
+		}
+
+		if (this.syncEngine?.isInProgress()) {
+			new Notice('Sync already in progress...');
+			return;
+		}
+
+		new Notice('Starting sync...');
+		await this.syncScheduler?.triggerSync('manual');
+		new Notice('Sync completed');
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+	/**
+	 * Trigger manual backup with user feedback
+	 */
+	async triggerManualBackup(): Promise<void> {
+		if (!this.settings.backupEnabled) {
+			new Notice('Backup is disabled. Enable it in settings.');
+			return;
+		}
+
+		// Backup engine will be implemented in Phase 5
+		new Notice('Backup triggered (backup engine coming in Phase 5)');
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
+	/**
+	 * Pause automatic sync
+	 */
+	private pauseSync(): void {
+		this.syncScheduler?.pause();
+		this.statusBar?.updateSyncState({
+			status: 'paused',
+		});
+		new Notice('Sync paused');
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	/**
+	 * Resume automatic sync
+	 */
+	private resumeSync(): void {
+		this.syncScheduler?.resume();
+		this.statusBar?.updateSyncState({
+			status: 'synced',
+		});
+		new Notice('Sync resumed');
+	}
+
+	/**
+	 * Get S3 provider instance
+	 * Used by other modules that need S3 access
+	 */
+	getS3Provider(): S3Provider | null {
+		return this.s3Provider;
+	}
+
+	/**
+	 * Get sync journal instance
+	 */
+	getSyncJournal(): SyncJournal | null {
+		return this.syncJournal;
 	}
 }

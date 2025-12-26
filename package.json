@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obsidian-s3-sync-and-backup",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Bi-directional vault synchronization and scheduled backups with S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
@@ -10,8 +10,15 @@
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint ."
 	},
-	"keywords": [],
-	"license": "0-BSD",
+	"keywords": [
+		"obsidian",
+		"s3",
+		"sync",
+		"backup",
+		"encryption"
+	],
+	"author": "Sathindu",
+	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^16.11.6",
 		"esbuild": "0.25.5",
@@ -24,6 +31,10 @@
 		"jiti": "2.6.1"
 	},
 	"dependencies": {
-		"obsidian": "latest"
+		"obsidian": "latest",
+		"@aws-sdk/client-s3": "^3.700.0",
+		"tweetnacl": "^1.0.3",
+		"hash-wasm": "^4.11.0",
+		"idb": "^8.0.1"
 	}
 }

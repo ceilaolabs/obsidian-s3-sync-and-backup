@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "obsidian-s3-sync-and-backup",
+	"name": "S3 Sync & Backup",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Bi-directional vault sync and scheduled backups with S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional E2E encryption.",
+	"author": "Sathindu",
+	"authorUrl": "https://github.com/ceilaolabs",
 	"isDesktopOnly": false
 }

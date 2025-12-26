@@ -116,8 +116,8 @@ Manual install for testing:
 - Use Obsidian API for all vault operations (`this.app.vault`)
 - Use `@aws-sdk/client-s3` v3 for S3 operations
 - Use IndexedDB for local state persistence
-- Use Web Crypto API for hashing
-- Use `tweetnacl` for XChaCha20-Poly1305 encryption
+- Use `hash-wasm` for Argon2id key derivation AND SHA-256 file hashing
+- Use `tweetnacl` for XSalsa20-Poly1305 encryption (~7KB, pure JS, audited)
 - Use configurable prefixes for all S3 paths (never hardcode)
 - Handle errors gracefully — retry transient failures, show user-friendly messages
 - Use `async/await` over promise chains
@@ -174,7 +174,7 @@ Manual install for testing:
 
 ## References
 
-- **PRD:** See `obsidian-s3-sync-prd.md` for complete requirements
+- **PRD:** See `obsidian-s3-sync-and-backup.md` for complete requirements
 - **Obsidian API:** https://docs.obsidian.md
 - **Developer Policies:** https://docs.obsidian.md/Developer+policies
 - **Plugin Guidelines:** https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines
