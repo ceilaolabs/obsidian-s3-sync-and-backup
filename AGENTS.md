@@ -96,6 +96,21 @@ Manual install for testing:
 2. Copy `main.js`, `manifest.json`, `styles.css` to: `<Vault>/.obsidian/plugins/obsidian-s3-sync-and-backup/`
 3. Reload Obsidian and enable in **Settings → Community plugins**
 
+## Linting
+
+Before completing any development work, run ESLint to check for issues:
+
+```bash
+npm run lint # Run ESLint with Obsidian specific rules
+```
+
+The project uses `eslint-plugin-obsidianmd` which enforces Obsidian specific best practices including:
+- Proper use of Obsidian APIs (e.g., `Vault#configDir` instead of hardcoded `.obsidian`)
+- UI conventions (sentence case for text, proper Settings API usage)
+- Type safety for Obsidian types (avoiding unsafe casts to `TFile`/`TFolder`)
+
+**Always fix any linting errors before committing code.**
+
 ## DO
 
 **Documentation & Code Quality:**
