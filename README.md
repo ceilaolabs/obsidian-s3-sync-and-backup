@@ -203,7 +203,7 @@ Costs vary by provider. Cloudflare R2 offers free egress. AWS S3 charges for sto
 
 ## License
 
-MIT © [CeilaoLabs](https://github.com/ceilaolabs)
+MIT © [CeilãoLabs](https://github.com/ceilaolabs)
 
 ---
 
