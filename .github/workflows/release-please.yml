@@ -30,36 +30,36 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - name: Checkout Code
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm ci
 
-      - name: Build production bundle
+      - name: Build Production Bundle
         run: npm run build
 
-      - name: Verify build artifacts
+      - name: Verify Build Artifacts
         run: |
           if [ ! -f main.js ]; then
-            echo "❌ main.js not found"
+            echo "[X] main.js not found"
             exit 1
           fi
           if [ ! -f manifest.json ]; then
-            echo "❌ manifest.json not found"
+            echo "[X] manifest.json not found"
             exit 1
           fi
           if [ ! -f styles.css ]; then
-            echo "❌ styles.css not found"
+            echo "[X] styles.css not found"
             exit 1
           fi
-          echo "✅ All release artifacts present"
+          echo "[✓] All release artifacts present"
 
       - name: Upload Release Assets
         env:
