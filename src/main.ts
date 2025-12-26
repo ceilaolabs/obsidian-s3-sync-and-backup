@@ -17,6 +17,9 @@ import { SyncJournal } from './sync/SyncJournal';
 import { ChangeTracker } from './sync/ChangeTracker';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
+import { SnapshotCreator } from './backup/SnapshotCreator';
+import { RetentionManager } from './backup/RetentionManager';
+import { getOrCreateDeviceId } from './crypto/VaultMarker';
 
 /**
  * S3SyncBackupPlugin - Main plugin class
@@ -44,6 +47,18 @@ export default class S3SyncBackupPlugin extends Plugin {
 	/** Sync scheduler for periodic syncs */
 	private syncScheduler: SyncScheduler | null = null;
 
+	/** Backup snapshot creator */
+	private snapshotCreator: SnapshotCreator | null = null;
+
+	/** Backup retention manager */
+	private retentionManager: RetentionManager | null = null;
+
+	/** Device ID for backup tracking */
+	private deviceId: string = '';
+
+	/** Backup in progress flag */
+	private isBackupRunning = false;
+
 	/**
 	 * Plugin load lifecycle hook
 	 * Called when the plugin is enabled
@@ -53,6 +68,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		// Load settings
 		await this.loadSettings();
+
+		// Get device ID
+		this.deviceId = getOrCreateDeviceId();
 
 		// Initialize S3 provider
 		this.s3Provider = new S3Provider(this.settings);
@@ -103,6 +121,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 				});
 			},
 		});
+
+		// Initialize backup components
+		this.snapshotCreator = new SnapshotCreator(this.app, this.s3Provider, this.settings);
+		this.retentionManager = new RetentionManager(this.s3Provider, this.settings);
 
 		// Update status bar based on settings
 		this.updateStatusBarFromSettings();
@@ -185,6 +207,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Update sync scheduler settings
 		if (this.syncScheduler) {
 			this.syncScheduler.updateSettings(this.settings);
+		}
+
+		// Update backup components
+		if (this.snapshotCreator) {
+			this.snapshotCreator.updateSettings(this.settings);
+		}
+		if (this.retentionManager) {
+			this.retentionManager.updateSettings(this.settings);
 		}
 	}
 
@@ -353,8 +383,69 @@ export default class S3SyncBackupPlugin extends Plugin {
 			return;
 		}
 
-		// Backup engine will be implemented in Phase 5
-		new Notice('Backup triggered (backup engine coming in Phase 5)');
+		if (this.isBackupRunning) {
+			new Notice('Backup already in progress...');
+			return;
+		}
+
+		if (!this.snapshotCreator || !this.s3Provider) {
+			new Notice('Backup system not initialized');
+			return;
+		}
+
+		this.isBackupRunning = true;
+		new Notice('Starting backup...');
+
+		// Update status bar
+		this.statusBar?.updateBackupState({
+			status: 'running',
+			isRunning: true,
+		});
+
+		try {
+			// Create backup snapshot
+			const vaultName = this.app.vault.getName();
+			const result = await this.snapshotCreator.createSnapshot(this.deviceId, vaultName);
+
+			if (result.success) {
+				new Notice(`Backup completed: ${result.filesBackedUp} files`);
+
+				// Update status bar
+				this.statusBar?.updateBackupState({
+					status: 'completed',
+					lastBackupTime: Date.now(),
+					isRunning: false,
+				});
+
+				// Apply retention policy
+				if (this.settings.retentionEnabled && this.retentionManager) {
+					const deleted = await this.retentionManager.applyRetentionPolicy();
+					if (deleted > 0 && this.settings.debugLogging) {
+						console.log(`[S3 Backup] Retention: deleted ${deleted} old backups`);
+					}
+				}
+			} else {
+				const errorMsg = result.errors.length > 0 ? result.errors[0] : 'Unknown error';
+				new Notice(`Backup completed with errors: ${errorMsg}`);
+
+				this.statusBar?.updateBackupState({
+					status: 'error',
+					isRunning: false,
+					lastError: errorMsg,
+				});
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			new Notice(`Backup failed: ${errorMessage}`);
+
+			this.statusBar?.updateBackupState({
+				status: 'error',
+				isRunning: false,
+				lastError: errorMessage,
+			});
+		} finally {
+			this.isBackupRunning = false;
+		}
 	}
 
 	/**
