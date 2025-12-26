@@ -144,8 +144,8 @@ npm install
 ### Build
 
 ```bash
-npm run build       # Production build
-npm run dev         # Development with watch mode
+npm run build   # Production build
+npm run dev     # Development with watch mode
 ```
 
 ### Lint
