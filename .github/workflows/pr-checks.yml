@@ -1,0 +1,108 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+  build:
+    name: Build Plugin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Verify required files exist
+        run: |
+          if [ ! -f main.js ]; then
+            echo "❌ main.js not found after build"
+            exit 1
+          fi
+          if [ ! -f manifest.json ]; then
+            echo "❌ manifest.json not found"
+            exit 1
+          fi
+          if [ ! -f styles.css ]; then
+            echo "❌ styles.css not found"
+            exit 1
+          fi
+          echo "✅ All required files present"
+
+  pre-release-check:
+    name: Pre-release Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate version consistency
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+
+          echo "package.json version: $PACKAGE_VERSION"
+          echo "manifest.json version: $MANIFEST_VERSION"
+
+          if [ "$PACKAGE_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "❌ Version mismatch between package.json and manifest.json"
+            exit 1
+          fi
+          echo "✅ Versions are consistent"
+
+      - name: Validate versions.json format
+        run: |
+          if ! node -e "JSON.parse(require('fs').readFileSync('versions.json', 'utf8'))"; then
+            echo "❌ versions.json is not valid JSON"
+            exit 1
+          fi
+          echo "✅ versions.json is valid JSON"
+
+      - name: Validate minAppVersion
+        run: |
+          MIN_APP_VERSION=$(node -p "require('./manifest.json').minAppVersion")
+          if [ -z "$MIN_APP_VERSION" ]; then
+            echo "❌ minAppVersion not set in manifest.json"
+            exit 1
+          fi
+          echo "✅ minAppVersion is set: $MIN_APP_VERSION"

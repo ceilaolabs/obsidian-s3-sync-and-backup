@@ -126,11 +126,42 @@ You can then manually merge the changes and delete the conflict files.
 - Keep local backups of critical data
 - Use IAM policies to limit S3 access
 
+## Contributing
+
+We welcome contributions! This project uses [Conventional Commits](https://www.conventionalcommits.org/) for commit messages to enable automated releases and changelog generation.
+
+### Commit Message Format
+
+All commits must follow the conventional commits specification:
+
+```
+<type>(<scope>): <subject>
+```
+
+**Types:**
+- `feat`: New feature (triggers minor version bump)
+- `fix`: Bug fix (triggers patch version bump)
+- `docs`: Documentation changes
+- `refactor`: Code refactoring
+- `perf`: Performance improvements
+- `test`: Adding or updating tests
+- `chore`: Maintenance tasks
+
+**Examples:**
+```bash
+feat: add support for custom S3 endpoints
+fix: resolve sync conflict detection bug
+docs: update installation instructions
+refactor(sync): simplify conflict resolution logic
+```
+
+For detailed contributing guidelines, please see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Development
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22+ (24 recommended)
 - npm
 
 ### Setup

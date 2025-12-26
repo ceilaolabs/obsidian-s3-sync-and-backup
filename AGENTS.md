@@ -111,6 +111,54 @@ The project uses `eslint-plugin-obsidianmd` which enforces Obsidian specific bes
 
 **Always fix any linting errors before committing code.**
 
+## Commit Messages & CI/CD
+
+This project uses **Conventional Commits** for commit messages and **release-please** for automated releases.
+
+### Commit Format
+
+All commits must follow the conventional commits specification:
+
+```
+<type>(<scope>): <subject>
+```
+
+**Common types:**
+- `feat:` - New feature (triggers minor version bump)
+- `fix:` - Bug fix (triggers patch version bump)
+- `docs:` - Documentation changes
+- `refactor:` - Code refactoring
+- `perf:` - Performance improvements
+- `chore:` - Maintenance tasks
+
+**Examples:**
+```bash
+feat: add support for MinIO custom paths
+fix: resolve conflict detection for binary files
+docs: update installation instructions
+refactor(sync): simplify journal persistence logic
+```
+
+### Automated Release Workflow
+
+1. **Pull Requests** - PR checks run automatically:
+   - Linting validation
+   - Production build verification
+   - Commit message validation (commitlint)
+   - Pre-release checks
+
+2. **Merging to master** - release-please creates/updates a Release PR:
+   - Auto-bumps version in `package.json`, `manifest.json`, `versions.json`
+   - Generates `CHANGELOG.md` from commit messages
+   - Groups changes by type (Features, Bug Fixes, etc.)
+
+3. **Merging Release PR** - GitHub release is automatically published:
+   - Creates Git tag (e.g., `0.2.0` without `v` prefix)
+   - Builds production bundle
+   - Uploads `manifest.json`, `main.js`, `styles.css` as release assets
+
+**See `CONTRIBUTING.md` for detailed guidelines.**
+
 ## DO
 
 **Documentation & Code Quality:**
@@ -173,10 +221,26 @@ The project uses `eslint-plugin-obsidianmd` which enforces Obsidian specific bes
 
 ## Versioning & Releases
 
-- Bump `version` in `manifest.json` (SemVer: `x.y.z`)
-- Update `versions.json` to map plugin version → minimum app version
-- Create GitHub release with tag matching version exactly (no `v` prefix)
-- Attach `manifest.json`, `main.js`, `styles.css` as release assets
+**This project uses automated releases via release-please.** Versions are managed automatically based on conventional commit messages.
+
+### Automated Process
+
+1. **Use conventional commits** when merging to master (e.g., `feat:`, `fix:`)
+2. **release-please** analyzes commits and creates a Release PR with:
+   - Updated `version` in `manifest.json`, `package.json`, `versions.json` (SemVer: `x.y.z`)
+   - Auto-generated `CHANGELOG.md` from commit messages
+3. **Merge the Release PR** to automatically:
+   - Create GitHub release with tag matching version (no `v` prefix)
+   - Build and attach `manifest.json`, `main.js`, `styles.css` as release assets
+
+### Manual Version Bumps (Not Recommended)
+
+If you need to manually bump versions, ensure consistency across:
+- `package.json` → `version` field
+- `manifest.json` → `version` field  
+- `versions.json` → add entry mapping version to `minAppVersion`
+
+**Prefer the automated workflow to avoid version inconsistencies.**
 
 ## Troubleshooting
 
