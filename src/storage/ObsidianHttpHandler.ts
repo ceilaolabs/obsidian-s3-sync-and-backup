@@ -33,44 +33,55 @@ export class ObsidianHttpHandler {
         const url = this.buildUrl(request);
 
         // Convert headers to Record<string, string>
+        // Filter out problematic headers that Obsidian handles automatically
         const headers: Record<string, string> = {};
         for (const [key, value] of Object.entries(request.headers)) {
             if (value !== undefined) {
+                // Skip headers that can cause issues
+                const lowerKey = key.toLowerCase();
+                if (lowerKey === 'content-length' || lowerKey === 'host') {
+                    continue;
+                }
                 headers[key] = value;
             }
         }
 
-        // Build request body
-        let body: ArrayBuffer | string | undefined;
-        if (request.body) {
-            if (request.body instanceof Uint8Array) {
-                body = request.body.buffer.slice(
-                    request.body.byteOffset,
-                    request.body.byteOffset + request.body.byteLength
-                );
-            } else if (typeof request.body === 'string') {
-                body = request.body;
-            } else if (request.body instanceof ArrayBuffer) {
-                body = request.body;
-            }
-        }
-
-        // Build Obsidian request params
+        // Build Obsidian request params - start with minimal config
         const requestParams: RequestUrlParam = {
             url,
             method: request.method as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
             headers,
-            body,
             throw: false, // Don't throw on HTTP errors
         };
 
+        // Add body only if present and not a GET/HEAD request
+        if (request.body && request.method !== 'GET' && request.method !== 'HEAD') {
+            if (request.body instanceof Uint8Array) {
+                // Convert Uint8Array to ArrayBuffer
+                requestParams.body = request.body.buffer.slice(
+                    request.body.byteOffset,
+                    request.body.byteOffset + request.body.byteLength
+                );
+            } else if (typeof request.body === 'string') {
+                requestParams.body = request.body;
+            } else if (request.body instanceof ArrayBuffer) {
+                requestParams.body = request.body;
+            }
+        }
+
         try {
+            console.log(`[S3 HTTP] ${request.method} ${url}`);
+
             const obsidianResponse = await requestUrl(requestParams);
+
+            console.log(`[S3 HTTP] Response: ${obsidianResponse.status}`);
 
             // Convert response headers
             const responseHeaders: Record<string, string> = {};
-            for (const [key, value] of Object.entries(obsidianResponse.headers)) {
-                responseHeaders[key.toLowerCase()] = value;
+            if (obsidianResponse.headers) {
+                for (const [key, value] of Object.entries(obsidianResponse.headers)) {
+                    responseHeaders[key.toLowerCase()] = value;
+                }
             }
 
             // Create HttpResponse
@@ -82,8 +93,9 @@ export class ObsidianHttpHandler {
 
             return { response };
         } catch (error) {
-            // Handle network errors
-            const message = error instanceof Error ? error.message : 'Network request failed';
+            // Handle network errors with more detail
+            console.error('[S3 HTTP] Request error:', error);
+            const message = error instanceof Error ? error.message : String(error);
             throw new Error(`Request failed: ${message}`);
         }
     }
@@ -92,11 +104,21 @@ export class ObsidianHttpHandler {
      * Build full URL from HttpRequest
      */
     private buildUrl(request: HttpRequest): string {
-        const protocol = request.protocol || 'https:';
+        // Get protocol without trailing colon if present
+        let protocol = request.protocol || 'https:';
+        if (!protocol.endsWith(':')) {
+            protocol += ':';
+        }
+
         const hostname = request.hostname;
         const port = request.port;
-        const path = request.path || '/';
+        let path = request.path || '/';
         const query = request.query;
+
+        // Ensure path starts with /
+        if (!path.startsWith('/')) {
+            path = '/' + path;
+        }
 
         let url = `${protocol}//${hostname}`;
 
@@ -106,23 +128,24 @@ export class ObsidianHttpHandler {
 
         url += path;
 
-        // Add query string
+        // Add query string from request.query
         if (query && Object.keys(query).length > 0) {
-            const queryParams = new URLSearchParams();
+            const queryParts: string[] = [];
             for (const [key, value] of Object.entries(query)) {
                 if (Array.isArray(value)) {
                     for (const v of value) {
-                        if (v !== null) {
-                            queryParams.append(key, v);
+                        if (v !== null && v !== undefined) {
+                            queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`);
                         }
                     }
                 } else if (value !== undefined && value !== null) {
-                    queryParams.append(key, value);
+                    queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
                 }
             }
-            const queryString = queryParams.toString();
-            if (queryString) {
-                url += `?${queryString}`;
+            if (queryParts.length > 0) {
+                // Check if path already has query string
+                const separator = url.includes('?') ? '&' : '?';
+                url += separator + queryParts.join('&');
             }
         }
 
