@@ -15,7 +15,14 @@ export async function obsidianFetch(
     input: RequestInfo | URL,
     init?: RequestInit
 ): Promise<Response> {
-    const url = typeof input === 'string' ? input : input.toString();
+    let url: string;
+    if (typeof input === 'string') {
+        url = input;
+    } else if (input instanceof URL) {
+        url = input.href;
+    } else {
+        url = input.url;
+    }
 
     // Build headers object
     const headers: Record<string, string> = {};
@@ -53,8 +60,8 @@ export async function obsidianFetch(
         } else if (typeof init.body === 'string') {
             requestParams.body = init.body;
         } else {
-            // For other body types, convert to string
-            requestParams.body = String(init.body);
+            // For other body types, convert to string using JSON
+            requestParams.body = JSON.stringify(init.body);
         }
     }
 
@@ -75,7 +82,7 @@ export async function obsidianFetch(
         });
     } catch (error) {
         // Network error
-        throw new TypeError(`Network request failed: ${error}`);
+        throw new TypeError(`Network request failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 

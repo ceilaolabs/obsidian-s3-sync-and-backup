@@ -134,7 +134,7 @@ export const DEFAULT_SETTINGS: S3SyncBackupSettings = {
 	retentionDays: 30,
 	retentionCopies: 30,
 
-	excludePatterns: ['.obsidian/workspace*', '.trash/*'],
+	excludePatterns: ['workspace*', '.trash/*'],
 	debugLogging: false,
 };
 

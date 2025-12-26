@@ -41,7 +41,7 @@ export class BackupDownloader {
     async getManifest(backupName: string): Promise<BackupManifest> {
         const key = `${this.settings.backupPrefix}/${backupName}/.backup-manifest.json`;
         const manifestJson = await this.s3Provider.downloadFileAsText(key);
-        return JSON.parse(manifestJson);
+        return JSON.parse(manifestJson) as BackupManifest;
     }
 
     /**

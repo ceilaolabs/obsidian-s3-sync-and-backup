@@ -64,7 +64,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Called when the plugin is enabled
 	 */
 	async onload(): Promise<void> {
-		console.log('Loading S3 Sync & Backup plugin');
+		console.debug('Loading S3 Sync & Backup plugin');
 
 		// Load settings
 		await this.loadSettings();
@@ -147,7 +147,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
 			// Delay startup sync to let vault fully load
 			setTimeout(() => {
-				this.syncScheduler?.triggerSync('startup');
+				void this.syncScheduler?.triggerSync('startup');
 			}, 3000);
 		}
 	}
@@ -157,7 +157,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Called when the plugin is disabled
 	 */
 	onunload(): void {
-		console.log('Unloading S3 Sync & Backup plugin');
+		console.debug('Unloading S3 Sync & Backup plugin');
 
 		// Stop sync services
 		this.stopSyncServices();
@@ -185,7 +185,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Load plugin settings from disk
 	 */
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<S3SyncBackupSettings> | null);
 	}
 
 	/**
@@ -347,10 +347,8 @@ export default class S3SyncBackupPlugin extends Plugin {
 			name: 'Open settings',
 			callback: () => {
 				// Navigate to plugin settings
-				// @ts-ignore - accessing internal API
-				this.app.setting.open();
-				// @ts-ignore
-				this.app.setting.openTabById('obsidian-s3-sync-and-backup');
+				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
+				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('obsidian-s3-sync-and-backup');
 			},
 		});
 	}
@@ -421,7 +419,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 				if (this.settings.retentionEnabled && this.retentionManager) {
 					const deleted = await this.retentionManager.applyRetentionPolicy();
 					if (deleted > 0 && this.settings.debugLogging) {
-						console.log(`[S3 Backup] Retention: deleted ${deleted} old backups`);
+						console.debug(`[S3 Backup] Retention: deleted ${deleted} old backups`);
 					}
 				}
 			} else {

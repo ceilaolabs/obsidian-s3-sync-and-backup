@@ -5,7 +5,7 @@
  * tracks pending changes for synchronization.
  */
 
-import { App, TFile, TAbstractFile, Vault } from 'obsidian';
+import { App, TFile, TAbstractFile } from 'obsidian';
 import { hashContent } from '../crypto/Hasher';
 import { SyncJournal } from './SyncJournal';
 
@@ -44,11 +44,11 @@ export class ChangeTracker {
         this.app = app;
         this.journal = journal;
 
-        // Bind event handlers
-        this.onCreateHandler = this.onFileCreate.bind(this);
-        this.onModifyHandler = this.onFileModify.bind(this);
-        this.onDeleteHandler = this.onFileDelete.bind(this);
-        this.onRenameHandler = this.onFileRename.bind(this);
+        // Bind event handlers (wrap async in void to satisfy type checker)
+        this.onCreateHandler = (file) => { void this.onFileCreate(file); };
+        this.onModifyHandler = (file) => { void this.onFileModify(file); };
+        this.onDeleteHandler = (file) => { void this.onFileDelete(file); };
+        this.onRenameHandler = (file, oldPath) => { void this.onFileRename(file, oldPath); };
     }
 
     /**
@@ -227,8 +227,8 @@ export class ChangeTracker {
             clearTimeout(this.debounceTimeoutId);
         }
 
-        this.debounceTimeoutId = setTimeout(async () => {
-            await this.updateJournalForFile(file);
+        this.debounceTimeoutId = setTimeout(() => {
+            void this.updateJournalForFile(file);
             this.debounceTimeoutId = null;
         }, this.debounceMs);
     }

@@ -123,7 +123,7 @@ export function createS3RetryOptions(debugLogging: boolean): RetryOptions {
         isRetryable: (error) => isNetworkError(error) || isRateLimitError(error as Error & { $metadata?: { httpStatusCode?: number } }),
         onRetry: (attempt, error, delayMs) => {
             if (debugLogging) {
-                console.log(`[S3 Retry] Attempt ${attempt} failed: ${error.message}, retrying in ${delayMs}ms`);
+                console.debug(`[S3 Retry] Attempt ${attempt} failed: ${error.message}, retrying in ${delayMs}ms`);
             }
         },
     };

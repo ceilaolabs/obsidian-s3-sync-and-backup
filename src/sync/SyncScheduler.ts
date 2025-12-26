@@ -6,7 +6,7 @@
 
 import { Plugin } from 'obsidian';
 import { SyncEngine } from './SyncEngine';
-import { S3SyncBackupSettings, SyncIntervalMinutes } from '../types';
+import { S3SyncBackupSettings } from '../types';
 
 /**
  * SyncScheduler class - Manages sync timing
@@ -73,13 +73,13 @@ export class SyncScheduler {
         this.intervalId = this.plugin.registerInterval(
             window.setInterval(() => {
                 if (!this.isPaused) {
-                    this.triggerSync('scheduled');
+                    void this.triggerSync('scheduled');
                 }
             }, intervalMs)
         ) as unknown as number;
 
         if (this.settings.debugLogging) {
-            console.log(`[S3 Sync] Scheduler started: every ${this.settings.syncIntervalMinutes} minutes`);
+            console.debug(`[S3 Sync] Scheduler started: every ${this.settings.syncIntervalMinutes} minutes`);
         }
     }
 
@@ -98,7 +98,7 @@ export class SyncScheduler {
         this.isPaused = false;
 
         if (this.settings.debugLogging) {
-            console.log('[S3 Sync] Scheduler stopped');
+            console.debug('[S3 Sync] Scheduler stopped');
         }
     }
 
@@ -108,7 +108,7 @@ export class SyncScheduler {
     pause(): void {
         this.isPaused = true;
         if (this.settings.debugLogging) {
-            console.log('[S3 Sync] Scheduler paused');
+            console.debug('[S3 Sync] Scheduler paused');
         }
     }
 
@@ -118,7 +118,7 @@ export class SyncScheduler {
     resume(): void {
         this.isPaused = false;
         if (this.settings.debugLogging) {
-            console.log('[S3 Sync] Scheduler resumed');
+            console.debug('[S3 Sync] Scheduler resumed');
         }
     }
 
@@ -135,13 +135,13 @@ export class SyncScheduler {
     async triggerSync(trigger: 'manual' | 'scheduled' | 'startup'): Promise<void> {
         if (this.syncEngine.isInProgress()) {
             if (this.settings.debugLogging) {
-                console.log('[S3 Sync] Skipping - sync already in progress');
+                console.debug('[S3 Sync] Skipping - sync already in progress');
             }
             return;
         }
 
         if (this.settings.debugLogging) {
-            console.log(`[S3 Sync] Triggering sync: ${trigger}`);
+            console.debug(`[S3 Sync] Triggering sync: ${trigger}`);
         }
 
         this.onSyncStart?.();
@@ -152,7 +152,7 @@ export class SyncScheduler {
             this.onSyncComplete?.(result.success, result.conflicts.length);
 
             if (result.errors.length > 0 && this.settings.debugLogging) {
-                console.log('[S3 Sync] Errors:', result.errors);
+                console.debug('[S3 Sync] Errors:', result.errors);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

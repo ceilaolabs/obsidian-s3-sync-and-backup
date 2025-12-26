@@ -314,7 +314,7 @@ export class SyncJournal {
      * @param merge - If true, merge with existing; if false, replace all
      */
     async importFromJson(json: string, merge = true): Promise<void> {
-        const entries: SyncJournalEntry[] = JSON.parse(json);
+        const entries = JSON.parse(json) as SyncJournalEntry[];
 
         if (!merge) {
             await this.clear();

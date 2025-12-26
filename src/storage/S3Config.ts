@@ -9,15 +9,7 @@ import { S3ClientConfig } from '@aws-sdk/client-s3';
 import { S3ProviderType, S3SyncBackupSettings } from '../types';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
-/**
- * Default endpoints for known providers
- * Custom providers require user-provided endpoint
- */
-const PROVIDER_ENDPOINTS: Partial<Record<S3ProviderType, string>> = {
-    // AWS S3 uses region-based endpoints (handled dynamically)
-    // MinIO requires custom endpoint from user
-    // r2 uses accountId-based endpoint
-};
+// Provider endpoints are determined dynamically based on settings
 
 /**
  * Get the S3 endpoint URL for a given provider

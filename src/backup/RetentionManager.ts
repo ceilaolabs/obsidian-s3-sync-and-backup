@@ -69,7 +69,7 @@ export class RetentionManager {
         }
 
         if (this.settings.debugLogging && toDelete.length > 0) {
-            console.log(`[S3 Backup] Retention: deleted ${toDelete.length} old backups`);
+            console.debug(`[S3 Backup] Retention: deleted ${toDelete.length} old backups`);
         }
 
         return toDelete.length;
@@ -111,7 +111,7 @@ export class RetentionManager {
 
             try {
                 const manifestJson = await this.s3Provider.downloadFileAsText(manifestKey);
-                const manifest: BackupManifest = JSON.parse(manifestJson);
+                const manifest = JSON.parse(manifestJson) as BackupManifest;
 
                 backups.push({
                     name: folder,

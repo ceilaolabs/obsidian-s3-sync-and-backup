@@ -9,10 +9,9 @@
  * - Advanced (debug logging, exclude patterns)
  */
 
-import { App, Notice, PluginSettingTab, Setting, TextComponent } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
 import {
-	S3SyncBackupSettings,
 	S3ProviderType,
 	S3_PROVIDER_NAMES,
 	SyncIntervalMinutes,
@@ -64,7 +63,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render Connection Settings Section
 	 */
 	private renderConnectionSection(containerEl: HTMLElement): void {
-		containerEl.createEl('h2', { text: 'Connection' });
+		new Setting(containerEl).setName('Connection').setHeading();
 
 		// Provider selection
 		new Setting(containerEl)
@@ -118,7 +117,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setName('Bucket')
 			.setDesc('Name of your S3 bucket')
 			.addText((text) => {
-				text.setPlaceholder('my-obsidian-bucket');
+				text.setPlaceholder('my-bucket');
 				text.setValue(this.plugin.settings.bucket);
 				text.onChange(async (value) => {
 					this.plugin.settings.bucket = value;
@@ -128,7 +127,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// Access Key ID
 		new Setting(containerEl)
-			.setName('Access Key ID')
+			.setName('Access key ID')
 			.setDesc('Your S3 access key ID')
 			.addText((text) => {
 				text.setPlaceholder('AKIAIOSFODNN7EXAMPLE');
@@ -142,10 +141,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// Secret Access Key
 		new Setting(containerEl)
-			.setName('Secret Access Key')
+			.setName('Secret access key')
 			.setDesc('Your S3 secret access key')
 			.addText((text) => {
-				text.setPlaceholder('wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+				text.setPlaceholder('your-secret-key');
 				text.setValue(this.plugin.settings.secretAccessKey);
 				text.inputEl.type = 'password';
 				text.onChange(async (value) => {
@@ -157,8 +156,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		// Force Path Style (for MinIO and custom providers)
 		if (this.plugin.settings.provider === 'minio' || this.plugin.settings.provider === 'custom') {
 			new Setting(containerEl)
-				.setName('Force Path Style')
-				.setDesc('Use path-style URLs (required for MinIO and some S3-compatible services)')
+				.setName('Force path style')
+				.setDesc('Use path-style URLs (required for MinIO and some S3 compatible services)')
 				.addToggle((toggle) => {
 					toggle.setValue(this.plugin.settings.forcePathStyle);
 					toggle.onChange(async (value) => {
@@ -170,12 +169,12 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// Test Connection button
 		const testConnectionSetting = new Setting(containerEl)
-			.setName('Test Connection')
+			.setName('Test connection')
 			.setDesc('Verify your S3 credentials and bucket access');
 
 		testConnectionSetting.addButton((button) => {
 			this.testConnectionButton = button.buttonEl;
-			button.setButtonText('Test Connection');
+			button.setButtonText('Test connection');
 			button.onClick(async () => {
 				await this.testConnection(button.buttonEl);
 			});
@@ -228,7 +227,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			provider.destroy();
 
 			new Notice(`✓ ${message}`);
-			buttonEl.textContent = '✓ Connected';
+			buttonEl.textContent = '✓ connected';
 
 			// Reset button text after delay
 			setTimeout(() => {
@@ -238,7 +237,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			new Notice(`✗ ${errorMessage}`);
-			buttonEl.textContent = '✗ Failed';
+			buttonEl.textContent = '✗ failed';
 			buttonEl.disabled = false;
 
 			// Reset button text after delay
@@ -252,10 +251,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render Encryption Settings Section
 	 */
 	private renderEncryptionSection(containerEl: HTMLElement): void {
-		containerEl.createEl('h2', { text: 'Encryption' });
+		new Setting(containerEl).setName('Encryption').setHeading();
 
 		new Setting(containerEl)
-			.setName('Enable End-to-End Encryption')
+			.setName('Enable end-to-end encryption')
 			.setDesc('Encrypt all files before uploading to S3')
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.encryptionEnabled);
@@ -272,7 +271,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				cls: 's3-sync-backup-warning',
 			});
 			noteEl.createEl('p', {
-				text: '⚠️ This passphrase encrypts both synced files AND backups. If lost, your data CANNOT be recovered.',
+				text: '⚠️ This passphrase encrypts both synced files and backups. If lost, your data cannot be recovered.',
 			});
 
 			// Passphrase field will be implemented when encryption is built
@@ -292,10 +291,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render Sync Settings Section
 	 */
 	private renderSyncSection(containerEl: HTMLElement): void {
-		containerEl.createEl('h2', { text: 'Sync' });
+		new Setting(containerEl).setName('Sync').setHeading();
 
 		new Setting(containerEl)
-			.setName('Enable Sync')
+			.setName('Enable sync')
 			.setDesc('Enable bi-directional vault synchronization')
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.syncEnabled);
@@ -310,7 +309,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		if (this.plugin.settings.syncEnabled) {
 			// Sync Prefix
 			new Setting(containerEl)
-				.setName('Sync Prefix')
+				.setName('Sync prefix')
 				.setDesc('S3 path prefix for synced files (e.g., "vault" → s3://bucket/vault/)')
 				.addText((text) => {
 					text.setPlaceholder('vault');
@@ -338,7 +337,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			// Sync interval (only shown if auto-sync enabled)
 			if (this.plugin.settings.autoSyncEnabled) {
 				new Setting(containerEl)
-					.setName('Sync Interval')
+					.setName('Sync interval')
 					.setDesc('How often to automatically sync')
 					.addDropdown((dropdown) => {
 						for (const [value, name] of Object.entries(SYNC_INTERVAL_NAMES)) {
@@ -355,7 +354,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 			// Sync on startup
 			new Setting(containerEl)
-				.setName('Sync on Startup')
+				.setName('Sync on startup')
 				.setDesc('Sync when Obsidian starts')
 				.addToggle((toggle) => {
 					toggle.setValue(this.plugin.settings.syncOnStartup);
@@ -371,10 +370,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render Backup Settings Section
 	 */
 	private renderBackupSection(containerEl: HTMLElement): void {
-		containerEl.createEl('h2', { text: 'Backup' });
+		new Setting(containerEl).setName('Backup').setHeading();
 
 		new Setting(containerEl)
-			.setName('Enable Backups')
+			.setName('Enable backups')
 			.setDesc('Create scheduled backup snapshots of your vault')
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.backupEnabled);
@@ -389,7 +388,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		if (this.plugin.settings.backupEnabled) {
 			// Backup Prefix
 			new Setting(containerEl)
-				.setName('Backup Prefix')
+				.setName('Backup prefix')
 				.setDesc('S3 path prefix for backups (e.g., "backups" → s3://bucket/backups/)')
 				.addText((text) => {
 					text.setPlaceholder('backups');
@@ -402,7 +401,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 			// Backup interval
 			new Setting(containerEl)
-				.setName('Backup Interval')
+				.setName('Backup interval')
 				.setDesc('How often to create backup snapshots')
 				.addDropdown((dropdown) => {
 					for (const [value, name] of Object.entries(BACKUP_INTERVAL_NAMES)) {
@@ -417,10 +416,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				});
 
 			// Retention settings header
-			containerEl.createEl('h4', { text: 'Retention Policy' });
+			new Setting(containerEl).setName('Retention policy').setHeading();
 
 			new Setting(containerEl)
-				.setName('Enable Retention')
+				.setName('Enable retention')
 				.setDesc('Automatically delete old backups')
 				.addToggle((toggle) => {
 					toggle.setValue(this.plugin.settings.retentionEnabled);
@@ -434,11 +433,11 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			if (this.plugin.settings.retentionEnabled) {
 				// Retention mode
 				new Setting(containerEl)
-					.setName('Retention Mode')
+					.setName('Retention mode')
 					.setDesc('How to determine which backups to keep')
 					.addDropdown((dropdown) => {
-						dropdown.addOption('days', 'By Days');
-						dropdown.addOption('copies', 'By Copies');
+						dropdown.addOption('days', 'By days');
+						dropdown.addOption('copies', 'By copies');
 						dropdown.setValue(this.plugin.settings.retentionMode);
 						dropdown.onChange(async (value) => {
 							this.plugin.settings.retentionMode = value as RetentionMode;
@@ -449,7 +448,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 				if (this.plugin.settings.retentionMode === 'days') {
 					new Setting(containerEl)
-						.setName('Retention Days')
+						.setName('Retention days')
 						.setDesc('Delete backups older than this many days (1-360)')
 						.addText((text) => {
 							text.setPlaceholder('30');
@@ -462,7 +461,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						});
 				} else {
 					new Setting(containerEl)
-						.setName('Retention Copies')
+						.setName('Retention copies')
 						.setDesc('Keep only the latest N backups (1-1000)')
 						.addText((text) => {
 							text.setPlaceholder('30');
@@ -478,10 +477,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 			// Backup Now button
 			new Setting(containerEl)
-				.setName('Manual Backup')
+				.setName('Manual backup')
 				.setDesc('Create a backup snapshot now')
 				.addButton((button) => {
-					button.setButtonText('Backup Now');
+					button.setButtonText('Backup now');
 					button.onClick(async () => {
 						// Will be connected to backup engine
 						new Notice('Backup triggered (not yet implemented)');
@@ -494,11 +493,11 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render Advanced Settings Section
 	 */
 	private renderAdvancedSection(containerEl: HTMLElement): void {
-		containerEl.createEl('h2', { text: 'Advanced' });
+		new Setting(containerEl).setName('Advanced').setHeading();
 
 		// Debug logging
 		new Setting(containerEl)
-			.setName('Debug Logging')
+			.setName('Debug logging')
 			.setDesc('Enable verbose logging for troubleshooting')
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.debugLogging);
@@ -510,10 +509,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// Exclude patterns
 		new Setting(containerEl)
-			.setName('Exclude Patterns')
+			.setName('Exclude patterns')
 			.setDesc('Files/folders to exclude from sync (comma-separated globs)')
 			.addTextArea((text) => {
-				text.setPlaceholder('.obsidian/workspace*, .trash/*');
+				text.setPlaceholder('workspace*, .trash/*');
 				text.setValue(this.plugin.settings.excludePatterns.join(', '));
 				text.onChange(async (value) => {
 					this.plugin.settings.excludePatterns = value
@@ -526,7 +525,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// Reset to defaults
 		new Setting(containerEl)
-			.setName('Reset to Defaults')
+			.setName('Reset to defaults')
 			.setDesc('Reset all settings to their default values')
 			.addButton((button) => {
 				button.setButtonText('Reset');

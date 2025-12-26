@@ -70,11 +70,11 @@ export class ObsidianHttpHandler {
         }
 
         try {
-            console.log(`[S3 HTTP] ${request.method} ${url}`);
+            console.debug(`[S3 HTTP] ${request.method} ${url}`);
 
             const obsidianResponse = await requestUrl(requestParams);
 
-            console.log(`[S3 HTTP] Response: ${obsidianResponse.status}`);
+            console.debug(`[S3 HTTP] Response: ${obsidianResponse.status}`);
 
             // Convert response headers
             const responseHeaders: Record<string, string> = {};

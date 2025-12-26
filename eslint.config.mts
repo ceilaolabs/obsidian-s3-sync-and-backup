@@ -31,4 +31,11 @@ export default tseslint.config(
 		"versions.json",
 		"main.js",
 	]),
+	// Disable overly strict sentence-case for placeholder text
+	{
+		files: ["src/settings.ts", "src/sync/ConflictHandler.ts"],
+		rules: {
+			"obsidianmd/ui/sentence-case": "off",
+		},
+	},
 );

@@ -94,7 +94,7 @@ export class SnapshotCreator {
             result.success = result.errors.length === 0;
 
             if (this.settings.debugLogging) {
-                console.log(`[S3 Backup] Snapshot created: ${backupName}, ${result.filesBackedUp} files`);
+                console.debug(`[S3 Backup] Snapshot created: ${backupName}, ${result.filesBackedUp} files`);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

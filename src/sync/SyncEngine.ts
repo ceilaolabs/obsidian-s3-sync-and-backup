@@ -15,8 +15,6 @@ import {
     SyncResult,
     SyncPlanItem,
     SyncAction,
-    SyncError,
-    S3ObjectInfo,
 } from '../types';
 
 /**
@@ -414,8 +412,11 @@ export class SyncEngine {
 
         // Update journal
         const hash = await hashContent(content);
-        const file = this.app.vault.getAbstractFileByPath(path) as TFile;
-        await this.journal.markSynced(path, hash, hash, file.stat.mtime, Date.now());
+        const downloadedFile = this.app.vault.getAbstractFileByPath(path);
+        if (!(downloadedFile instanceof TFile)) {
+            throw new Error(`Downloaded file not found: ${path}`);
+        }
+        await this.journal.markSynced(path, hash, hash, downloadedFile.stat.mtime, Date.now());
     }
 
     /**
@@ -424,7 +425,7 @@ export class SyncEngine {
     private async deleteLocalFile(path: string): Promise<void> {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (file instanceof TFile) {
-            await this.app.vault.trash(file, true);
+            await this.app.fileManager.trashFile(file);
         }
         await this.journal.deleteEntry(path);
     }
@@ -527,7 +528,7 @@ export class SyncEngine {
      */
     private log(message: string): void {
         if (this.debugLogging) {
-            console.log(`[S3 Sync] ${message}`);
+            console.debug(`[S3 Sync] ${message}`);
         }
     }
 }

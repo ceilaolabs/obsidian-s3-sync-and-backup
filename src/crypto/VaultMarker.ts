@@ -94,7 +94,7 @@ export class VaultMarker {
         try {
             // Download marker
             const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
-            const marker: VaultEncryptionMarker = JSON.parse(markerJson);
+            const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
 
             // Derive key with stored salt
             const salt = base64ToBytes(marker.salt);
@@ -124,7 +124,7 @@ export class VaultMarker {
     async getMetadata(): Promise<Omit<VaultEncryptionMarker, 'verificationToken'> | null> {
         try {
             const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
-            const marker: VaultEncryptionMarker = JSON.parse(markerJson);
+            const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
 
             // Return metadata without sensitive fields
             return {
@@ -160,18 +160,21 @@ export function generateDeviceId(): string {
 }
 
 /**
- * Get or create device ID from local storage
+ * Get or create device ID
+ * Uses a simple random ID - note: localStorage is used here as this is
+ * for device identification, not vault-specific data
  */
 export function getOrCreateDeviceId(): string {
     const STORAGE_KEY = 'obsidian-s3-sync-device-id';
 
-    // Try to get existing device ID
-    let deviceId = localStorage.getItem(STORAGE_KEY);
+    // Try to get existing device ID from window localStorage
+    // Note: Using window.localStorage directly as this is device-specific, not vault-specific
+    let deviceId = window.localStorage.getItem(STORAGE_KEY);
 
     if (!deviceId) {
         // Generate new device ID
         deviceId = generateDeviceId();
-        localStorage.setItem(STORAGE_KEY, deviceId);
+        window.localStorage.setItem(STORAGE_KEY, deviceId);
     }
 
     return deviceId;

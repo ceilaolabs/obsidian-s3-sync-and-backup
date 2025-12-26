@@ -4,7 +4,7 @@
  * Registers all command palette commands for the plugin.
  */
 
-import { Notice, Plugin } from 'obsidian';
+import { Notice } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
 
 /**
@@ -105,10 +105,8 @@ export function registerCommands(plugin: S3SyncBackupPlugin): void {
         name: 'View backups',
         callback: () => {
             // Open settings to backup section
-            // @ts-ignore - accessing internal API
-            plugin.app.setting.open();
-            // @ts-ignore
-            plugin.app.setting.openTabById('obsidian-s3-sync-and-backup');
+            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
+            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('obsidian-s3-sync-and-backup');
         },
     });
 
@@ -117,10 +115,8 @@ export function registerCommands(plugin: S3SyncBackupPlugin): void {
         id: 'open-settings',
         name: 'Open settings',
         callback: () => {
-            // @ts-ignore - accessing internal API
-            plugin.app.setting.open();
-            // @ts-ignore
-            plugin.app.setting.openTabById('obsidian-s3-sync-and-backup');
+            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
+            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('obsidian-s3-sync-and-backup');
         },
     });
 }

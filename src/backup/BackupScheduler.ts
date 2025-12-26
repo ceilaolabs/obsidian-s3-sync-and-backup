@@ -8,7 +8,6 @@
 import { Plugin } from 'obsidian';
 import {
     S3SyncBackupSettings,
-    BackupInterval,
     BACKUP_INTERVAL_MS,
 } from '../types';
 
@@ -54,7 +53,7 @@ export class BackupScheduler {
         // Restart scheduler if interval changed
         if (this.isEnabled) {
             this.stop();
-            this.start();
+            void this.start();
         }
     }
 
@@ -82,12 +81,12 @@ export class BackupScheduler {
 
         this.intervalId = this.plugin.registerInterval(
             window.setInterval(() => {
-                this.checkAndRunBackup();
+                void this.checkAndRunBackup();
             }, checkIntervalMs)
         ) as unknown as number;
 
         if (this.settings.debugLogging) {
-            console.log(`[S3 Backup] Scheduler started: ${this.settings.backupInterval}`);
+            console.debug(`[S3 Backup] Scheduler started: ${this.settings.backupInterval}`);
         }
     }
 
@@ -105,7 +104,7 @@ export class BackupScheduler {
         this.isEnabled = false;
 
         if (this.settings.debugLogging) {
-            console.log('[S3 Backup] Scheduler stopped');
+            console.debug('[S3 Backup] Scheduler stopped');
         }
     }
 
@@ -124,7 +123,7 @@ export class BackupScheduler {
         if (now >= nextDue) {
             // Backup is due
             if (this.settings.debugLogging) {
-                console.log('[S3 Backup] Backup is due, triggering...');
+                console.debug('[S3 Backup] Backup is due, triggering...');
             }
 
             try {
@@ -144,7 +143,7 @@ export class BackupScheduler {
      */
     async triggerManualBackup(): Promise<void> {
         if (this.settings.debugLogging) {
-            console.log('[S3 Backup] Manual backup triggered');
+            console.debug('[S3 Backup] Manual backup triggered');
         }
 
         try {
@@ -182,9 +181,9 @@ export class BackupScheduler {
     private async loadLastBackupTime(): Promise<void> {
         try {
             // Use plugin's loadData for persistence
-            const data = await this.plugin.loadData();
-            if (data && data[this.LAST_BACKUP_KEY]) {
-                this.lastBackupTime = data[this.LAST_BACKUP_KEY];
+            const data = await this.plugin.loadData() as Record<string, unknown> | null;
+            if (data && typeof data[this.LAST_BACKUP_KEY] === 'number') {
+                this.lastBackupTime = data[this.LAST_BACKUP_KEY] as number;
             }
         } catch {
             this.lastBackupTime = null;
@@ -196,7 +195,7 @@ export class BackupScheduler {
      */
     private async saveLastBackupTime(): Promise<void> {
         try {
-            const data = (await this.plugin.loadData()) || {};
+            const data = (await this.plugin.loadData() as Record<string, unknown> | null) ?? {};
             data[this.LAST_BACKUP_KEY] = this.lastBackupTime;
             await this.plugin.saveData(data);
         } catch (error) {

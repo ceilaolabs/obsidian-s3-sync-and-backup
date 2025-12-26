@@ -5,7 +5,7 @@
  * Provides conflict notification and resolution tracking.
  */
 
-import { App, Modal, TFile, Notice } from 'obsidian';
+import { App, Modal, TFile } from 'obsidian';
 import { SyncJournal } from './SyncJournal';
 
 /**
@@ -214,7 +214,7 @@ class ConflictModal extends Modal {
         const { contentEl } = this;
 
         // Title
-        contentEl.createEl('h2', { text: '⚠️ Sync Conflict Detected' });
+        contentEl.createEl('h2', { text: '⚠️ Sync conflict detected' });
 
         // Description
         const fileName = this.conflictInfo.path.substring(
