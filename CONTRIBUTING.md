@@ -7,6 +7,9 @@ Thank you for your interest in contributing! This document provides guidelines a
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
+- [Project Structure](#project-structure)
+- [Testing](#testing)
+- [Linting](#linting)
 - [Conventional Commits](#conventional-commits)
 - [Pull Request Process](#pull-request-process)
 - [Release Process](#release-process)
@@ -38,36 +41,131 @@ This project follows the standard open-source code of conduct. Please be respect
 
 ### Installation
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+```
 
-2. Start development mode (with watch):
-   ```bash
-   npm run dev
-   ```
+### Build Commands
 
-3. Build production bundle:
-   ```bash
-   npm run build
-   ```
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Development build with watch mode |
+| `npm run build` | Production build (with type checking) |
+| `npm run lint` | Run ESLint |
+| `npm run test` | Run unit tests |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run test:coverage` | Run tests with coverage report |
 
-4. Run linter:
-   ```bash
-   npm run lint
-   ```
+### Manual Testing in Obsidian
 
-### Testing Your Changes
-
-For manual testing, copy the built files to your Obsidian vault:
+After building, copy the output files to your test vault:
 
 ```bash
 # After running npm run build
 cp main.js manifest.json styles.css /path/to/your/vault/.obsidian/plugins/obsidian-s3-sync-and-backup/
 ```
 
-Then reload Obsidian to test your changes.
+Then reload Obsidian (`Ctrl/Cmd + R`) to test your changes.
+
+## Project Structure
+
+```
+obsidian-s3-sync-and-backup/
+├── src/
+│   ├── main.ts                  # Plugin entry point (keep minimal)
+│   ├── settings.ts              # Settings tab UI
+│   ├── statusbar.ts             # Status bar component
+│   ├── commands.ts              # Command palette registration
+│   ├── types.ts                 # TypeScript interfaces & constants
+│   │
+│   ├── sync/                    # Sync engine modules
+│   │   ├── SyncEngine.ts        # Main sync orchestrator
+│   │   ├── SyncScheduler.ts     # Periodic sync scheduling
+│   │   ├── SyncJournal.ts       # IndexedDB sync state
+│   │   ├── ChangeTracker.ts     # Local file change detection
+│   │   ├── DiffEngine.ts        # File comparison logic
+│   │   └── ConflictHandler.ts   # Conflict resolution
+│   │
+│   ├── backup/                  # Backup engine modules
+│   │   ├── BackupScheduler.ts   # Backup scheduling logic
+│   │   ├── SnapshotCreator.ts   # Vault snapshot creation
+│   │   ├── RetentionManager.ts  # Old backup cleanup
+│   │   └── BackupDownloader.ts  # Backup download (zip)
+│   │
+│   ├── storage/                 # S3 abstraction layer
+│   │   ├── S3Provider.ts        # S3 operations wrapper
+│   │   ├── S3Config.ts          # S3 client configuration
+│   │   ├── ObsidianHttpHandler.ts   # Custom HTTP handler
+│   │   └── ObsidianRequestHandler.ts
+│   │
+│   ├── crypto/                  # Encryption modules
+│   │   ├── KeyDerivation.ts     # Argon2id key derivation
+│   │   ├── FileEncryptor.ts     # XSalsa20-Poly1305 encryption
+│   │   ├── VaultMarker.ts       # Encryption marker file
+│   │   └── Hasher.ts            # SHA-256 hashing
+│   │
+│   └── utils/                   # Shared utilities
+│       ├── retry.ts             # Retry with exponential backoff
+│       ├── time.ts              # Time formatting utilities
+│       └── paths.ts             # Path normalization
+│
+├── tests/                       # Unit tests (Jest)
+│   ├── __mocks__/               # Mock implementations
+│   ├── crypto/                  # Crypto module tests
+│   ├── sync/                    # Sync module tests
+│   └── utils/                   # Utility tests
+│
+├── .github/                     # GitHub Actions workflows
+│   └── workflows/
+│       ├── pr-checks.yml        # PR validation
+│       └── release-please.yml   # Automated releases
+│
+├── manifest.json                # Obsidian plugin manifest
+├── package.json                 # npm package config
+├── tsconfig.json                # TypeScript config
+├── esbuild.config.mjs           # Build configuration
+├── eslint.config.mts            # ESLint configuration
+├── jest.config.cjs              # Jest test configuration
+└── commitlint.config.js         # Commit message validation
+```
+
+## Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+npm run test
+
+# Run tests in watch mode (for development)
+npm run test:watch
+
+# Run with coverage report
+npm run test:coverage
+```
+
+### Writing Tests
+
+- Place test files in `/tests/` directory, mirroring the `src/` structure
+- Use Jest and `jest-environment-jsdom` for browser-like environment
+- Mock Obsidian APIs as needed (see `tests/__mocks__/`)
+
+## Linting
+
+The project uses ESLint with `eslint-plugin-obsidianmd` for Obsidian-specific best practices.
+
+```bash
+npm run lint
+```
+
+### Key Linting Rules
+
+- Use `Vault#configDir` instead of hardcoded `.obsidian`
+- Use sentence case for UI text
+- Avoid unsafe casts to `TFile`/`TFolder`
+- Proper Settings API usage
+
+**Always fix linting errors before committing.**
 
 ## Conventional Commits
 
@@ -136,16 +234,12 @@ git commit -m "fix(backup): prevent duplicate backups during rapid changes
 This change adds a debounce mechanism to the backup trigger to prevent
 duplicate backups when multiple files are changed in quick succession.
 
-The debounce delay is configurable in settings (default: 5 seconds).
-
 Fixes #123"
 ```
 
 ### Validation
 
-Commit messages are automatically validated by `commitlint` in pull requests. If your commit message doesn't follow the conventional commits format, the PR checks will fail.
-
-To validate commits locally before pushing:
+Commit messages are validated by `commitlint` in PR checks. To validate locally:
 
 ```bash
 npx commitlint --from HEAD~1 --to HEAD --verbose
@@ -161,9 +255,9 @@ npx commitlint --from HEAD~1 --to HEAD --verbose
    ```
 
 2. **Make your changes** following the coding standards:
-   - Use TypeScript
+   - Use TypeScript with strict mode
    - Follow existing code style
-   - Add comments for complex logic
+   - Add JSDoc comments for public functions
    - Update documentation if needed
 
 3. **Commit your changes** using conventional commits:
@@ -198,13 +292,13 @@ Before submitting your PR, ensure:
 - [ ] All commits follow conventional commits format
 - [ ] Linting passes (`npm run lint`)
 - [ ] Build succeeds (`npm run build`)
+- [ ] Tests pass (`npm run test`)
 - [ ] Changes are tested manually in Obsidian
 - [ ] Documentation is updated if needed
-- [ ] No unnecessary files are included (node_modules, build artifacts, etc.)
 
 ## Release Process
 
-Releases are fully automated using [release-please](https://github.com/googleapis/release-please). Here's how it works:
+Releases are fully automated using [release-please](https://github.com/googleapis/release-please).
 
 ### Automated Workflow
 
