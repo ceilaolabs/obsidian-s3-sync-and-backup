@@ -1,7 +1,7 @@
-# vscode
+# VSCode
 .vscode 
 
-# Intellij
+# IntelliJ
 *.iml
 .idea
 
@@ -15,7 +15,10 @@ main.js
 # Exclude sourcemaps
 *.map
 
-# obsidian
+# Test coverage
+coverage
+
+# Obsidian
 data.json
 
 # Exclude macOS Finder (System Explorer) View States
