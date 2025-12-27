@@ -147,7 +147,7 @@ refactor(sync): simplify journal persistence logic
    - Commit message validation (commitlint)
    - Pre-release checks
 
-2. **Merging to master** - release-please creates/updates a Release PR:
+2. **Merging to main** - release-please creates/updates a Release PR:
    - Auto-bumps version in `package.json`, `manifest.json`, `versions.json`
    - Generates `CHANGELOG.md` from commit messages
    - Groups changes by type (Features, Bug Fixes, etc.)
@@ -225,7 +225,7 @@ refactor(sync): simplify journal persistence logic
 
 ### Automated Process
 
-1. **Use conventional commits** when merging to master (e.g., `feat:`, `fix:`)
+1. **Use conventional commits** when merging to main (e.g., `feat:`, `fix:`)
 2. **release-please** analyzes commits and creates a Release PR with:
    - Updated `version` in `manifest.json`, `package.json`, `versions.json` (SemVer: `x.y.z`)
    - Auto-generated `CHANGELOG.md` from commit messages

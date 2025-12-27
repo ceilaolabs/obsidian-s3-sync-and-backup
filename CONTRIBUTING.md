@@ -153,7 +153,7 @@ npx commitlint --from HEAD~1 --to HEAD --verbose
 
 ## Pull Request Process
 
-1. **Create a feature branch** from `master`:
+1. **Create a feature branch** from `main`:
    ```bash
    git checkout -b feat/your-feature-name
    # or
@@ -178,7 +178,7 @@ npx commitlint --from HEAD~1 --to HEAD --verbose
    ```
 
 5. **Create a Pull Request** on GitHub:
-   - Target the `master` branch
+   - Target the `main` branch
    - Fill out the PR template
    - Link any related issues
    - Wait for CI checks to pass
@@ -208,7 +208,7 @@ Releases are fully automated using [release-please](https://github.com/googleapi
 
 ### Automated Workflow
 
-1. **Conventional Commits**: When you merge a PR with conventional commits to `master`, release-please automatically:
+1. **Conventional Commits**: When you merge a PR with conventional commits to `main`, release-please automatically:
    - Analyzes commit messages
    - Determines the next version number (based on commit types)
    - Creates or updates a "Release PR"
