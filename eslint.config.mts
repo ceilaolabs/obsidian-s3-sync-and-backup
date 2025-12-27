@@ -25,6 +25,8 @@ export default tseslint.config(
 	globalIgnores([
 		"node_modules",
 		"dist",
+		"coverage",
+		"tests",
 		"esbuild.config.mjs",
 		"eslint.config.js",
 		"commitlint.config.js",
