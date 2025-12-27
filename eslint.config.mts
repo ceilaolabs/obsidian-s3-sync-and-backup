@@ -32,6 +32,7 @@ export default tseslint.config(
 		"commitlint.config.js",
 		"versions.json",
 		"main.js",
+		"scripts/version.mjs",
 	]),
 	// Disable overly strict sentence-case for placeholder text
 	{

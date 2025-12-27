@@ -1,66 +1,145 @@
-name: Release Please
+# =============================================================================
+# Release Workflow
+# =============================================================================
+# This workflow automates the release process using release-please.
+#
+# How it works:
+#   1. On every push to main, release-please analyzes commit messages
+#   2. It creates/updates a "Release PR" with version bumps and changelog
+#   3. When the Release PR is merged, this workflow:
+#      - Builds the production bundle
+#      - Updates versions.json for Obsidian compatibility tracking
+#      - Uploads release assets to the GitHub Release
+#
+# Required Secrets:
+#   - RELEASE_TOKEN: GitHub PAT with contents:write and pull-requests:write
+#
+# Jobs:
+#   - release-please:     Manages release PR and creates GitHub releases
+#   - build-and-publish:  Builds and uploads assets when a release is created
+#
+# See: https://github.com/googleapis/release-please
+# =============================================================================
+
+name: Release
 
 on:
+  # Trigger on pushes to main (analyzes commits for release)
   push:
     branches:
       - main
+  # Allow manual triggering for testing or re-runs
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish
+        required: true
+        type: boolean
+        default: true
 
+# Required permissions for release-please to create PRs and releases
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Release Please
+  # ---------------------------------------------------------------------------
+  # Analyzes conventional commits since last release and either:
+  #   - Creates/updates a Release PR with version bump and changelog, OR
+  #   - Creates a GitHub Release when the Release PR is merged
+  # ---------------------------------------------------------------------------
   release-please:
-    name: Create Release PR
+    name: Manage Release PR
     runs-on: ubuntu-latest
     outputs:
+      # Expose outputs for downstream jobs
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Run Release Please
         id: release
         uses: googleapis/release-please-action@v4
         with:
+          # Node release type handles package.json version bumping
           release-type: node
+          # Use PAT to allow triggering other workflows
           token: ${{ secrets.RELEASE_TOKEN }}
 
+      # Log the release status for debugging
+      - name: Output Status
+        run: |
+          echo "Release created: ${{ steps.release.outputs.release_created }}"
+          echo "Tag: ${{ steps.release.outputs.tag_name }}"
+          echo "Version: ${{ steps.release.outputs.version }}"
+
+  # ---------------------------------------------------------------------------
+  # Build and Publish
+  # ---------------------------------------------------------------------------
+  # Runs only when a release is created (Release PR was merged).
+  # Builds the plugin, updates versions.json, and uploads release assets.
+  # ---------------------------------------------------------------------------
   build-and-publish:
-    name: Build and Publish Release
+    name: Build and Publish
     needs: release-please
+    # Only run when release-please actually created a release
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          # Use PAT to allow pushing commits back to the repo
+          token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
-      - name: Install Dependencies
-        run: npm ci
+      - run: npm ci
 
+      # ---------------------------------------------------------------------------
+      # Update versions.json
+      # ---------------------------------------------------------------------------
+      # Obsidian uses versions.json to track minimum app version compatibility
+      # for each plugin version. This runs the version script to update it.
+      # ---------------------------------------------------------------------------
+      - name: Update versions.json
+        run: node scripts/version.mjs ${{ needs.release-please.outputs.version }}
+
+      # Commit and push versions.json if it changed
+      - name: Commit versions.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet versions.json; then
+            echo "versions.json unchanged"
+          else
+            git add versions.json
+            git commit -m "chore: update versions.json for ${{ needs.release-please.outputs.tag_name }}"
+            git push
+          fi
+
+      # Build the production bundle
       - name: Build Production Bundle
         run: npm run build
 
+      # Verify all required Obsidian plugin files exist
       - name: Verify Build Artifacts
         run: |
-          if [ ! -f main.js ]; then
-            echo "[X] main.js not found"
-            exit 1
-          fi
-          if [ ! -f manifest.json ]; then
-            echo "[X] manifest.json not found"
-            exit 1
-          fi
-          if [ ! -f styles.css ]; then
-            echo "[X] styles.css not found"
-            exit 1
-          fi
-          echo "[✓] All release artifacts present"
+          for file in main.js manifest.json styles.css; do
+            [ -f "$file" ] || { echo "[X] $file not found"; exit 1; }
+          done
+          echo "[OK] All release artifacts present"
 
+      # ---------------------------------------------------------------------------
+      # Upload Release Assets
+      # ---------------------------------------------------------------------------
+      # Uploads the built plugin files to the GitHub Release.
+      # These files are what users download when installing the plugin.
+      # ---------------------------------------------------------------------------
       - name: Upload Release Assets
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
@@ -71,7 +150,8 @@ jobs:
             styles.css \
             --clobber
 
-      - name: Verify Release
+      # Print release summary
+      - name: Release Summary
         run: |
-          echo "✅ Release ${{ needs.release-please.outputs.tag_name }} published successfully"
-          echo "📦 Uploaded files: main.js, manifest.json, styles.css"
+          echo "Release ${{ needs.release-please.outputs.tag_name }} published"
+          echo "Assets: main.js, manifest.json, styles.css"

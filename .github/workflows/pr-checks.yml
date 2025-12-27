@@ -1,90 +1,193 @@
+# =============================================================================
+# PR Checks Workflow
+# =============================================================================
+# This workflow runs on pull requests targeting the main branch and performs
+# code quality checks including commit validation, linting, testing, and builds.
+#
+# Jobs:
+#   - check-skip: Determines if checks should be skipped (for release-please PRs)
+#   - validate:   Validates commit messages follow conventional commits format
+#   - lint:       Runs ESLint to check code style and quality
+#   - test:       Runs the test suite with coverage reporting
+#   - build:      Builds the plugin and verifies required output files
+#   - pr-status:  Final status gate for branch protection rules
+#
+# Note: Release-please automated PRs are automatically skipped to prevent
+# redundant checks on bot-generated version bump commits.
+# =============================================================================
+
 name: PR Checks
 
 on:
   pull_request:
     branches: [main]
+    types: [opened, edited, synchronize, reopened]
 
 jobs:
-  test:
-    name: Run Tests
+  # ---------------------------------------------------------------------------
+  # Skip Check
+  # ---------------------------------------------------------------------------
+  # Detects release-please automated PRs to skip redundant CI checks.
+  # These PRs contain only version bumps and changelog updates.
+  # ---------------------------------------------------------------------------
+  check-skip:
+    name: Check Skip
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - name: Check for release-please PR
+        id: check
+        run: |
+          # Skip if PR is from github-actions bot or from release-please branch
+          if [[ "${{ github.actor }}" == "github-actions[bot]" ]] || \
+             [[ "${{ github.head_ref }}" == release-please--* ]]; then
+            echo "should_skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping: Release-please automated PR"
+          else
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Commit Validation
+  # ---------------------------------------------------------------------------
+  # Ensures all commits in the PR follow the Conventional Commits specification.
+  # This is required for release-please to properly generate changelogs.
+  # See: https://www.conventionalcommits.org/
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate Commits
+    needs: check-skip
+    if: needs.check-skip.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          # Fetch full history to validate all commits in the PR
+          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
-      - name: Install Dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Run Tests
-        run: npm test
+      # Validate commits from base to head of PR using commitlint
+      - name: Validate Commit Messages
+        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
 
-      - name: Run Tests with Coverage
-        run: npm run test:coverage
+  # ---------------------------------------------------------------------------
+  # Linting
+  # ---------------------------------------------------------------------------
+  # Runs ESLint to enforce code style and catch potential issues.
+  # Configuration is defined in eslint.config.mjs.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
+    needs: check-skip
+    if: needs.check-skip.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
-      - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - run: npm ci
+
+      - run: npm run lint
+
+  # ---------------------------------------------------------------------------
+  # Testing
+  # ---------------------------------------------------------------------------
+  # Runs the full test suite with code coverage reporting.
+  # Coverage reports are uploaded as artifacts for review.
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test
+    needs: check-skip
+    if: needs.check-skip.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - run: npm ci
+
+      # Run tests with coverage enabled
+      - run: npm run test:coverage
+
+      # Upload coverage report as artifact for later review
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage/
           retention-days: 7
 
-  lint:
-    name: Lint Code
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: "npm"
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Run Linter
-        run: npm run lint
-
+  # ---------------------------------------------------------------------------
+  # Build
+  # ---------------------------------------------------------------------------
+  # Builds the production bundle and verifies all required Obsidian plugin
+  # files are generated correctly (main.js, manifest.json, styles.css).
+  # ---------------------------------------------------------------------------
   build:
-    name: Build Plugin
+    name: Build
+    needs: [check-skip, lint, test]
+    if: needs.check-skip.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
-    needs: [test, lint]
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
-      - name: Install Dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Build Production Bundle
-        run: npm run build
+      - run: npm run build
 
-      - name: Verify Required Files Exist
+      # Verify all required Obsidian plugin files are present
+      - name: Verify Required Files
         run: |
-          if [ ! -f main.js ]; then
-            echo "[X] main.js not found"
+          for file in main.js manifest.json styles.css; do
+            [ -f "$file" ] || { echo "[X] $file not found"; exit 1; }
+          done
+          echo "[OK] All required files present"
+
+  # ---------------------------------------------------------------------------
+  # PR Status Gate
+  # ---------------------------------------------------------------------------
+  # Final status check required for branch protection rules.
+  # Consolidates results from all jobs into a single pass/fail status.
+  # ---------------------------------------------------------------------------
+  pr-status:
+    name: PR Status
+    runs-on: ubuntu-latest
+    needs: [check-skip, validate, lint, test, build]
+    # Always run to report final status, even if some jobs are skipped
+    if: always()
+    steps:
+      - name: Check Results
+        run: |
+          # If release-please PR, exit successfully (checks were skipped)
+          if [[ "${{ needs.check-skip.outputs.should_skip }}" == "true" ]]; then
+            echo "Release-please PR - checks skipped"
+            exit 0
+          fi
+          # Fail if any required job did not succeed
+          if [[ "${{ needs.validate.result }}" != "success" ]] || \
+             [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "One or more checks failed"
             exit 1
           fi
-          if [ ! -f manifest.json ]; then
-            echo "[X] manifest.json not found"
-            exit 1
-          fi
-          if [ ! -f styles.css ]; then
-            echo "[X] styles.css not found"
-            exit 1
-          fi
-          echo "[✓] All required files present"
+          echo "All checks passed"
