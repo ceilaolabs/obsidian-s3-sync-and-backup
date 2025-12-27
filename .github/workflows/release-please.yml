@@ -22,7 +22,7 @@ jobs:
         uses: googleapis/release-please-action@v4
         with:
           release-type: node
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
 
   build-and-publish:
     name: Build and Publish Release
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload Release Assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           gh release upload ${{ needs.release-please.outputs.tag_name }} \
             main.js \
