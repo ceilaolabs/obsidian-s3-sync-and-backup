@@ -69,11 +69,6 @@
                     "type": "json",
                     "path": "manifest.json",
                     "jsonpath": "$.version"
-                },
-                {
-                    "type": "json",
-                    "path": "versions.json",
-                    "jsonpath": "$"
                 }
             ]
         }
