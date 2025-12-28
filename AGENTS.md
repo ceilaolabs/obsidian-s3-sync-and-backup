@@ -2,9 +2,26 @@
 
 ## Project Overview
 
-**Obsidian S3 Sync & Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backup snapshots to S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption.
+**Obsidian S3 Sync & Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption.
 
 **Plugin ID:** `obsidian-s3-sync-and-backup`
+
+## Agent Workflow & Mindset
+
+### 🛠️ Workflow
+**Linting is mandatory.**
+- After **every** code modification or refactoring step, you must run:
+  ```bash
+  npm run lint
+  ```
+- You must fix any linting errors immediately. Do not leave them for later.
+
+### 🧠 Mindset & Quality
+**Code Perfection is a Myth.**
+- **Don't assume existing code is perfect.** Scrutinize it. If you see a bad pattern, fix it.
+- **Test Design:** Design tests based on *requirements* and *logic*, not just to mirror the current implementation.
+- **Fix the Code, Don't Hack the Test:** If a correctly designed test fails, it means the *code* is broken. Fix the code. **Never** overfit or weaken a test just to make it pass a buggy implementation.
+- **Root Cause Analysis:** When a bug is found, fix the root cause. Don't just patch it to work with existing bad patterns.
 
 ## Quick Context
 
