@@ -74,6 +74,17 @@ jobs:
           echo "Tag: ${{ steps.release.outputs.tag_name }}"
           echo "Version: ${{ steps.release.outputs.version }}"
 
+      # Fix release title to remove "v" prefix (Obsidian requires exact version)
+      - name: Fix Release Title
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release edit ${{ steps.release.outputs.tag_name }} \
+            --title "${{ steps.release.outputs.version }}"
+          echo "Updated release title to: ${{ steps.release.outputs.version }}"
+
   # ---------------------------------------------------------------------------
   # Build and Publish
   # ---------------------------------------------------------------------------
