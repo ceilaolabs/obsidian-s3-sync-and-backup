@@ -134,8 +134,15 @@ jobs:
         run: npm run test:unit -- --coverage
 
       # Run integration tests (if S3 credentials are configured)
+      # The npm script conditionally loads .env if it exists
       - name: Run Integration Tests
         if: env.S3_URL != ''
+        env:
+          S3_URL: ${{ secrets.S3_URL }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_REGION: ${{ secrets.S3_REGION }}
         run: npm run test:integration
 
       # Upload coverage report as artifact for later review
