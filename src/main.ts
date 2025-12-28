@@ -347,7 +347,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 			callback: () => {
 				// Navigate to plugin settings
 				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
-				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('obsidian-s3-sync-and-backup');
+				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('s3-sync-and-backup');
 			},
 		});
 	}
