@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-s3-sync-and-backup",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Bi-directional vault synchronization and scheduled backups for Obsidian using S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption",
 	"main": "main.js",
 	"type": "module",
