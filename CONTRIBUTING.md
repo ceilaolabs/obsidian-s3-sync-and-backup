@@ -134,8 +134,14 @@ obsidian-s3-sync-and-backup/
 ### Running Tests
 
 ```bash
-# Run all tests
-npm run test
+# Run unit tests only
+npm run test:unit
+
+# Run integration tests only (requires S3 credentials)
+npm run test:integration
+
+# Run all tests (unit + integration)
+npm run test:all
 
 # Run tests in watch mode (for development)
 npm run test:watch
@@ -144,11 +150,39 @@ npm run test:watch
 npm run test:coverage
 ```
 
-### Writing Tests
+### Unit Tests
+
+Unit tests run without external dependencies and test isolated functionality:
 
 - Place test files in `/tests/` directory, mirroring the `src/` structure
+- Name files as `*.test.ts`
 - Use Jest and `jest-environment-jsdom` for browser-like environment
 - Mock Obsidian APIs as needed (see `tests/__mocks__/`)
+
+### Integration Tests
+
+Integration tests verify S3 operations against a real S3-compatible storage:
+
+- Place test files in `/tests/` with naming `*.integration.test.ts`
+- Require S3 credentials configured in `.env` file
+- Execute real S3 operations (upload, download, delete)
+- Automatically clean up test files after execution
+
+**Setting up integration tests locally:**
+
+1. Copy `.env.sample` to `.env`
+2. Fill in your S3 credentials:
+   ```bash
+   S3_URL="https://your-endpoint.com"
+   S3_BUCKET_NAME="your-bucket"
+   S3_ACCESS_KEY="your-access-key"
+   S3_SECRET_ACCESS_KEY="your-secret-key"
+   S3_REGION="auto"  # or your region
+   ```
+3. Run: `npm run test:integration`
+
+> **Note:** Integration tests create files under `__test__/` prefix and clean up after execution.
+
 
 ## Linting
 

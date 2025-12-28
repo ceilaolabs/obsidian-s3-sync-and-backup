@@ -9,6 +9,9 @@
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"lint": "eslint .",
 		"test": "jest",
+		"test:unit": "jest --testPathIgnorePatterns='integration'",
+		"test:integration": "if [ -f .env ]; then node --env-file=.env node_modules/.bin/jest --config jest.integration.config.cjs; else jest --config jest.integration.config.cjs; fi",
+		"test:all": "npm run test:unit && npm run test:integration",
 		"test:watch": "jest --watch",
 		"test:coverage": "jest --coverage",
 		"version": "node scripts/version.mjs && git add manifest.json versions.json"
