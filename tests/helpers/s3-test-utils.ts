@@ -3,13 +3,13 @@
  *
  * Provides S3 client configuration that works in Node.js test environment
  * (bypassing Obsidian-specific HTTP handler)
+ *
+ * Note: Environment variables are loaded via Node.js --env-file flag in npm script
  */
 
 import { S3Client } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { S3SyncBackupSettings } from '../../src/types';
-
-require('dotenv').config();
 
 /**
  * Check if S3 credentials are configured
