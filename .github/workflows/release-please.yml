@@ -7,8 +7,8 @@
 #   1. On every push to main, release-please analyzes commit messages
 #   2. It creates/updates a "Release PR" with version bumps and changelog
 #   3. When the Release PR is merged, this workflow:
+#      - Verifies all version files are in sync
 #      - Builds the production bundle
-#      - Updates versions.json for Obsidian compatibility tracking
 #      - Uploads release assets to the GitHub Release
 #
 # Required Secrets:
@@ -63,9 +63,8 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          # Node release type handles package.json version bumping
-          release-type: node
           # Use PAT to allow triggering other workflows
+          # Configuration is read from release-please-config.json
           token: ${{ secrets.RELEASE_TOKEN }}
 
       # Log the release status for debugging
@@ -79,7 +78,7 @@ jobs:
   # Build and Publish
   # ---------------------------------------------------------------------------
   # Runs only when a release is created (Release PR was merged).
-  # Builds the plugin, updates versions.json, and uploads release assets.
+  # Verifies versions, builds the plugin, and uploads release assets.
   # ---------------------------------------------------------------------------
   build-and-publish:
     name: Build and Publish
@@ -93,34 +92,44 @@ jobs:
           # Use PAT to allow pushing commits back to the repo
           token: ${{ secrets.RELEASE_TOKEN }}
 
+      # ---------------------------------------------------------------------------
+      # Verify Version Consistency
+      # ---------------------------------------------------------------------------
+      # Ensures release-please correctly updated all version files.
+      # Fails the build if versions are out of sync.
+      # ---------------------------------------------------------------------------
+      - name: Verify Version Consistency
+        run: |
+          EXPECTED="${{ needs.release-please.outputs.version }}"
+          PKG_VERSION=$(jq -r '.version' package.json)
+          MANIFEST_VERSION=$(jq -r '.version' manifest.json)
+
+          echo "Expected version: $EXPECTED"
+          echo "package.json:     $PKG_VERSION"
+          echo "manifest.json:    $MANIFEST_VERSION"
+
+          ERRORS=0
+          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match release version ($EXPECTED)"
+            ERRORS=$((ERRORS + 1))
+          fi
+          if [ "$MANIFEST_VERSION" != "$EXPECTED" ]; then
+            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release version ($EXPECTED)"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "::error::Version mismatch detected. Check release-please-config.json extra-files configuration."
+            exit 1
+          fi
+          echo "::notice::All versions match: $EXPECTED"
+
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
       - run: npm ci
-
-      # ---------------------------------------------------------------------------
-      # Update versions.json
-      # ---------------------------------------------------------------------------
-      # Obsidian uses versions.json to track minimum app version compatibility
-      # for each plugin version. This runs the version script to update it.
-      # ---------------------------------------------------------------------------
-      - name: Update versions.json
-        run: node scripts/version.mjs ${{ needs.release-please.outputs.version }}
-
-      # Commit and push versions.json if it changed
-      - name: Commit versions.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet versions.json; then
-            echo "versions.json unchanged"
-          else
-            git add versions.json
-            git commit -m "chore: update versions.json for ${{ needs.release-please.outputs.tag_name }}"
-            git push
-          fi
 
       # Build the production bundle
       - name: Build Production Bundle

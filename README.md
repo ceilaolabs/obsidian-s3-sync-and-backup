@@ -3,7 +3,7 @@
 Bi-directional vault synchronization and scheduled backups for Obsidian with S3-compatible storage and optional end-to-end encryption.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Obsidian](https://img.shields.io/badge/Obsidian-1.4.0+-purple.svg)
+![Obsidian](https://img.shields.io/badge/Obsidian-1.0.0+-purple.svg)
 
 ## Features
 
