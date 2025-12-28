@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/v1.0.0...v1.0.1) (2025-12-27)
+
+
+### Bug Fixes
+
+* add versioning script and refactor actions ([78349ff](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/78349ff89fd1c1d051d533f88c75dc362311997c))
+* add versioning script and refactor actions ([67ecae7](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/67ecae7972b50318243aea7c6e4a03703e14b2d3))
+* ci and docs ([878b8e3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/878b8e334be43d83f23aad0222d885c050c39aab))
+
 ## 1.0.0 (2025-12-27)
 
 
