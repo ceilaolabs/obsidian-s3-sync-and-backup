@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.2...1.1.3) (2025-12-29)
+
+
+### Documentation
+
+* update project blueprint document ([d5a69c3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/d5a69c30d335373341f89e4f4e2c9081878ea2ec))
+
+
+### Code Refactoring
+
+* shorten plugin id and improve docs ([3a74e37](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/3a74e372baef46eeddcca50fa312f811155b86d9))
+* shorten plugin id and overhaul agent directives, documentation ([675f21c](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/675f21ca72c6476c1e800d9063c301851a7f293a))
+
 ## [1.1.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.1...1.1.2) (2025-12-28)
 
 
