@@ -3,7 +3,7 @@
 ## Overview
 
 **Product Name:** Obsidian S3 Sync & Backup  
-**Plugin ID:** obsidian-s3-sync-and-backup  
+**Plugin ID:** s3-sync-and-backup  
 **Repository:** github.com/ceilaolabs/obsidian-s3-sync-and-backup 
 **Version:** 1.0.0  
 **Author:** CeilãoLabs  
@@ -18,8 +18,9 @@ A lightweight, secure Obsidian plugin that provides bi-directional vault synchro
 Existing solutions either:
 - Require proprietary cloud services (Obsidian Sync)
 - Focus only on sync without backup snapshots
-- Lack robust encryption
 - Are overly complex for simple use cases
+- Not updated for a long time
+- Not working properly with different S3 compitable providers
 
 This plugin provides **simple periodic sync + scheduled backups** with S3-compatible storage users control.
 
@@ -39,12 +40,10 @@ This plugin provides **simple periodic sync + scheduled backups** with S3-compat
 ## S3 Bucket Structure
 
 ```
-s3://my-bucket/
+8
 ├── vault/                              # Sync prefix (configurable, default: "vault")
 │   ├── .obsidian-s3-sync/
-│   │   ├── vault.enc                   # Encryption marker + salt
-│   │   ├── journal.json                # Sync state backup
-│   │   └── device-registry.json        # Known devices
+│   │   └── .vault.enc                  # Encryption marker + salt
 │   ├── Notes/
 │   │   ├── meeting.md
 │   │   └── ideas.md
@@ -117,7 +116,7 @@ s3://my-bucket/
 │    • Salt (random 32 bytes)                                 │
 │    • Master key via Argon2id(passphrase, salt)              │
 │ 4. Plugin uploads encrypted marker file:                    │
-│    • {sync_prefix}/.obsidian-s3-sync/vault.enc              │
+│    • {sync_prefix}/.obsidian-s3-sync/.vault.enc             │
 │    • Contains: salt, encrypted verification token           │
 │ 5. All sync AND backup uploads are encrypted                │
 └─────────────────────────────────────────────────────────────┘
@@ -126,7 +125,7 @@ s3://my-bucket/
 │                   ADDITIONAL DEVICE SETUP                   │
 ├─────────────────────────────────────────────────────────────┤
 │ 1. User configures S3 connection                            │
-│ 2. Plugin detects vault.enc marker → prompts for passphrase │
+│ 2. Plugin detects .vault.enc marker → prompts for passphrase│
 │ 3. Plugin downloads salt, derives key, verifies             │
 │ 4. If verification fails → reject passphrase                │
 │ 5. If verification succeeds → sync & backup proceed         │
@@ -698,7 +697,7 @@ Only backup enabled:  [Sync: ○ | Backup: ✓ 6h ago]
 │  │                        CRYPTO LAYER                               │  │
 │  │  ┌──────────────┐  ┌───────────────┐  ┌──────────────────────┐    │  │
 │  │  │KeyDerivation │  │ FileEncryptor │  │   PassphraseVerifier │    │  │
-│  │  │(Argon2id)    │  │ (XChaCha20)   │  │   (vault.enc)        │    │  │
+│  │  │(Argon2id)    │  │ (XChaCha20)   │  │   (.vault.enc)       │    │  │
 │  │  └──────────────┘  └───────────────┘  └──────────────────────┘    │  │
 │  └───────────────────────────┬───────────────────────────────────────┘  │
 │                              │                                          │

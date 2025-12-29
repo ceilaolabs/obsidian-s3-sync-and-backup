@@ -1,375 +1,182 @@
 # Contributing to Obsidian S3 Sync & Backup
 
-Thank you for your interest in contributing! This document provides guidelines and instructions for contributing to this project.
+Welcome! We love contributions. This plugin brings enterprise-grade sync and backup capabilities to Obsidian using S3-compatible storage.
 
-## Table of Contents
+Before you dive in, please check these documents for context:
+- **[README.md](README.md)**: Features, installation, and usage.
+- **[AGENTS.md](AGENTS.md)**: Agent-specific directives and project architecture.
+- **[BLUEPRINT.md](BLUEPRINT.md)**: Full Product Requirements Document (PRD).
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-- [Development Setup](#development-setup)
-- [Project Structure](#project-structure)
-- [Testing](#testing)
-- [Linting](#linting)
-- [Conventional Commits](#conventional-commits)
-- [Pull Request Process](#pull-request-process)
-- [Release Process](#release-process)
+---
 
-## Code of Conduct
+## TL;DR Quick Start
 
-This project follows the standard open-source code of conduct. Please be respectful and constructive in all interactions.
+1.  **Fork** this repository on GitHub.
+2.  **Clone** your fork:
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/obsidian-s3-sync-and-backup.git
+    cd obsidian-s3-sync-and-backup
+    ```
+3.  **Install** dependencies:
+    ```bash
+    npm install
+    # Note: Requires Node.js 22+
+    ```
+4.  **Build** in watch mode:
+    ```bash
+    npm run dev
+    ```
 
-## Getting Started
-
-1. **Fork the repository** on GitHub
-2. **Clone your fork** locally:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/obsidian-s3-sync-and-backup.git
-   cd obsidian-s3-sync-and-backup
-   ```
-3. **Add upstream remote**:
-   ```bash
-   git remote add upstream https://github.com/ceilaolabs/obsidian-s3-sync-and-backup.git
-   ```
+---
 
 ## Development Setup
 
 ### Prerequisites
-
-- Node.js 22+ (24 recommended)
-- npm
-- Git
-
-### Installation
-
-```bash
-npm install
-```
+- **Node.js**: v22 or higher (v24 recommended).
+- **npm**: v10+.
+- **Git**: Latest version.
 
 ### Build Commands
-
 | Command | Description |
-|---------|-------------|
-| `npm run dev` | Development build with watch mode |
-| `npm run build` | Production build (with type checking) |
-| `npm run lint` | Run ESLint |
-| `npm run test` | Run unit tests |
-| `npm run test:watch` | Run tests in watch mode |
-| `npm run test:coverage` | Run tests with coverage report |
+| :--- | :--- |
+| `npm run dev` | Builds in watch mode (development). |
+| `npm run build` | Production build (minified, type-checked). |
+| `npm run lint` | **Mandatory.** Runs ESLint. |
+| `npm run test:unit` | Runs unit tests. |
+| `npm run test:integration` | Runs integration tests. |
 
-### Manual Testing in Obsidian
+### Local Testing Setup
+To test your changes in Obsidian:
+1.  Create a test vault in Obsidian.
+2.  Create the plugin folder:
+    `<VaultPath>/.obsidian/plugins/s3-sync-and-backup/`
+3.  Build the plugin (`npm run build`).
+4.  Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
+    - *Tip: You can symlink these files for easier development, but copying is safer to avoid file lock issues.*
+5.  Reload Obsidian (`Cmd/Ctrl + R`) and enable the plugin.
 
-After building, copy the output files to your test vault:
+---
 
-```bash
-# After running npm run build
-cp main.js manifest.json styles.css /path/to/your/vault/.obsidian/plugins/obsidian-s3-sync-and-backup/
-```
+## Contribution Workflow
 
-Then reload Obsidian (`Ctrl/Cmd + R`) to test your changes.
+### 1. Branching
+Create a new branch for your work. We use descriptive branch names:
+-   `feat/feature-name` (New features)
+-   `fix/bug-name` (Bug fixes)
+-   `docs/documentation-update` (Docs only)
+-   `refactor/cleanup` (Code restructuring)
 
-## Project Structure
+### 2. Making Changes
+-   **Write Code**: Follow the [Coding Standards](#-coding-standards) below.
+-   **Test**: Add unit tests for logic and integration tests for S3 operations.
+-   **Lint**: Run `npm run lint` frequently. **You cannot commit if linting fails.**
 
-```
-obsidian-s3-sync-and-backup/
-├── src/
-│   ├── main.ts                  # Plugin entry point (keep minimal)
-│   ├── settings.ts              # Settings tab UI
-│   ├── statusbar.ts             # Status bar component
-│   ├── commands.ts              # Command palette registration
-│   ├── types.ts                 # TypeScript interfaces & constants
-│   │
-│   ├── sync/                    # Sync engine modules
-│   │   ├── SyncEngine.ts        # Main sync orchestrator
-│   │   ├── SyncScheduler.ts     # Periodic sync scheduling
-│   │   ├── SyncJournal.ts       # IndexedDB sync state
-│   │   ├── ChangeTracker.ts     # Local file change detection
-│   │   ├── DiffEngine.ts        # File comparison logic
-│   │   └── ConflictHandler.ts   # Conflict resolution
-│   │
-│   ├── backup/                  # Backup engine modules
-│   │   ├── BackupScheduler.ts   # Backup scheduling logic
-│   │   ├── SnapshotCreator.ts   # Vault snapshot creation
-│   │   ├── RetentionManager.ts  # Old backup cleanup
-│   │   └── BackupDownloader.ts  # Backup download (zip)
-│   │
-│   ├── storage/                 # S3 abstraction layer
-│   │   ├── S3Provider.ts        # S3 operations wrapper
-│   │   ├── S3Config.ts          # S3 client configuration
-│   │   ├── ObsidianHttpHandler.ts   # Custom HTTP handler
-│   │   └── ObsidianRequestHandler.ts
-│   │
-│   ├── crypto/                  # Encryption modules
-│   │   ├── KeyDerivation.ts     # Argon2id key derivation
-│   │   ├── FileEncryptor.ts     # XSalsa20-Poly1305 encryption
-│   │   ├── VaultMarker.ts       # Encryption marker file
-│   │   └── Hasher.ts            # SHA-256 hashing
-│   │
-│   └── utils/                   # Shared utilities
-│       ├── retry.ts             # Retry with exponential backoff
-│       ├── time.ts              # Time formatting utilities
-│       └── paths.ts             # Path normalization
-│
-├── tests/                       # Unit tests (Jest)
-│   ├── __mocks__/               # Mock implementations
-│   ├── crypto/                  # Crypto module tests
-│   ├── sync/                    # Sync module tests
-│   └── utils/                   # Utility tests
-│
-├── .github/                     # GitHub Actions workflows
-│   └── workflows/
-│       ├── pr-checks.yml        # PR validation
-│       └── release-please.yml   # Automated releases
-│
-├── manifest.json                # Obsidian plugin manifest
-├── package.json                 # npm package config
-├── tsconfig.json                # TypeScript config
-├── esbuild.config.mjs           # Build configuration
-├── eslint.config.mts            # ESLint configuration
-├── jest.config.cjs              # Jest test configuration
-└── commitlint.config.js         # Commit message validation
-```
+### 3. Commit Messages (Crucial!)
+We use **[Conventional Commits](https://www.conventionalcommits.org/)**. This is **enforced** by CI and used to generate the CHANGELOG automatically.
 
-## Testing
+**Format:** `<type>(<scope>): <description>`
 
-### Running Tests
+**Types:**
+-   `feat`: New feature (Triggers **Minor** version bump).
+-   `fix`: Bug fix (Triggers **Patch** version bump).
+-   `docs`: Documentation changes.
+-   `style`: Formatting, missing semi colons, etc.
+-   `refactor`: Code change that neither fixes a bug nor adds a feature.
+-   `test`: Adding missing tests.
+-   `chore`: Maintenance tasks.
 
-```bash
-# Run unit tests only
-npm run test:unit
+**Examples:**
+-   `feat(sync): add support for Cloudflare R2`
+-   `fix(backup): resolve retention policy bug`
+-   `docs: update installation guide in README`
 
-# Run integration tests only (requires S3 credentials)
-npm run test:integration
+> **Note:** Append `!` to the type (e.g., `feat!: remove legacy API`) for Breaking Changes (Triggers **Major** version bump).
 
-# Run all tests (unit + integration)
-npm run test:all
+### 4. Pull Request (PR)
+1.  Push your branch to your fork.
+2.  Open a PR against the `main` branch.
+3.  Fill out the PR template completely.
+4.  **CI Checks** must pass:
+    -   `lint`: ESLint check.
+    -   `build`: TypeScript compilation.
+    -   `test`: Unit and integration tests.
+    -   `commitlint`: Commit message format check.
 
-# Run tests in watch mode (for development)
-npm run test:watch
+---
 
-# Run with coverage report
-npm run test:coverage
-```
+## Coding Standards
+
+### Critical Guidelines
+These are non-negotiable rules for this project:
+
+1.  **Strict Linting**:
+    -   Always run `npm run lint` before pushing.
+    -   Fix errors immediately; do not suppress them.
+
+2.  **Document Everything**:
+    -   **More is better.** Over-communicate in comments.
+    -   Use **JSDoc** for every exported function, class, and interface.
+    -   Explain *why* complex logic exists, not just *what* it does.
+
+3.  **Maintain Consistency**:
+    -   If you change logic, **update all related mentions** immediately.
+    -   Check `README.md`, `AGENTS.md`, and code comments to ensure they stay in sync.
+
+### Obsidian-Specific Rules
+-   **No Node.js APIs**: Remember, this runs in a browser/Electron (renderer). Do NOT use `fs`, `path`, or `crypto` modules directly (unless in strictly dev/test scripts).
+-   **Filesystem**: Use `this.app.vault` API.
+    -   Use `tFile` and `tFolder` references.
+    -   Use `Vault.process()` for atomic updates.
+-   **Paths**: Always wrap paths with `normalizePath()`.
+-   **Styles**: Do not use `el.style`. Use CSS classes and define them in `styles.css`.
+
+---
+
+## Testing Strategy
 
 ### Unit Tests
-
-Unit tests run without external dependencies and test isolated functionality:
-
-- Place test files in `/tests/` directory, mirroring the `src/` structure
-- Name files as `*.test.ts`
-- Use Jest and `jest-environment-jsdom` for browser-like environment
-- Mock Obsidian APIs as needed (see `tests/__mocks__/`)
+-   **Location**: `tests/` (mirroring `src/` structure).
+-   **Tool**: Jest + `jest-environment-jsdom`.
+-   **Focus**: Isolated logic (diff engine, scheduling math, conflict resolution).
+-   **Running**: `npm run test:unit`
 
 ### Integration Tests
+-   **Location**: `tests/**/*.integration.test.ts`.
+-   **Focus**: Real interactions with S3 providers.
+-   **Requirement**: You need a `.env` file with S3 credentials.
 
-Integration tests verify S3 operations against a real S3-compatible storage:
+**Setup for Integration Tests:**
+1.  Copy `.env.sample` to `.env`.
+2.  Fill in valid S3 credentials (AWS, MinIO, or R2).
+    ```env
+    S3_ENDPOINT=...
+    S3_REGION=...
+    S3_BUCKET=...
+    S3_ACCESS_KEY=...
+    S3_SECRET_KEY=...
+    ```
+3.  Run: `npm run test:integration`
+    > ⚠️ **Warning**: Integration tests may incur small costs (S3 requests) and create files in the specified bucket. They attempt to clean up, but use a test bucket if possible. Most of cloud providers give generous
+    free quota which is well above of these limits.
 
-- Place test files in `/tests/` with naming `*.integration.test.ts`
-- Require S3 credentials configured in `.env` file
-- Execute real S3 operations (upload, download, delete)
-- Automatically clean up test files after execution
-
-**Setting up integration tests locally:**
-
-1. Copy `.env.sample` to `.env`
-2. Fill in your S3 credentials:
-   ```bash
-   S3_URL="https://your-endpoint.com"
-   S3_BUCKET_NAME="your-bucket"
-   S3_ACCESS_KEY="your-access-key"
-   S3_SECRET_ACCESS_KEY="your-secret-key"
-   S3_REGION="auto"  # or your region
-   ```
-3. Run: `npm run test:integration`
-
-> **Note:** Integration tests create files under `__test__/` prefix and clean up after execution.
-
-
-## Linting
-
-The project uses ESLint with `eslint-plugin-obsidianmd` for Obsidian-specific best practices.
-
-```bash
-npm run lint
-```
-
-### Key Linting Rules
-
-- Use `Vault#configDir` instead of hardcoded `.obsidian`
-- Use sentence case for UI text
-- Avoid unsafe casts to `TFile`/`TFolder`
-- Proper Settings API usage
-
-**Always fix linting errors before committing.**
-
-## Conventional Commits
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/) for commit messages. This enables automated changelog generation and semantic versioning.
-
-### Commit Message Format
-
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-- **type**: The type of change (required)
-- **scope**: The area of the codebase affected (optional)
-- **subject**: A brief description of the change (required)
-- **body**: A detailed description (optional)
-- **footer**: Breaking changes and issue references (optional)
-
-### Commit Types
-
-| Type | Description | Changelog Section | Version Bump |
-|------|-------------|-------------------|--------------|
-| `feat` | New feature | Features | Minor |
-| `fix` | Bug fix | Bug Fixes | Patch |
-| `perf` | Performance improvement | Performance | Patch |
-| `docs` | Documentation only | Documentation | - |
-| `style` | Code style (formatting, etc.) | - | - |
-| `refactor` | Code refactoring | Code Refactoring | - |
-| `test` | Adding or updating tests | - | - |
-| `build` | Build system changes | - | - |
-| `ci` | CI configuration changes | - | - |
-| `chore` | Other changes | - | - |
-| `revert` | Revert a previous commit | Reverts | - |
-
-### Examples
-
-**Feature (triggers minor version bump):**
-```bash
-git commit -m "feat: add support for MinIO custom paths"
-```
-
-**Bug fix (triggers patch version bump):**
-```bash
-git commit -m "fix: resolve conflict detection for binary files"
-```
-
-**With scope:**
-```bash
-git commit -m "feat(sync): implement incremental sync algorithm"
-```
-
-**Breaking change (triggers major version bump):**
-```bash
-git commit -m "feat!: change encryption algorithm to XSalsa20
-
-BREAKING CHANGE: Existing encrypted vaults must be re-encrypted with the new algorithm."
-```
-
-**Multiple paragraphs:**
-```bash
-git commit -m "fix(backup): prevent duplicate backups during rapid changes
-
-This change adds a debounce mechanism to the backup trigger to prevent
-duplicate backups when multiple files are changed in quick succession.
-
-Fixes #123"
-```
-
-### Validation
-
-Commit messages are validated by `commitlint` in PR checks. To validate locally:
-
-```bash
-npx commitlint --from HEAD~1 --to HEAD --verbose
-```
-
-## Pull Request Process
-
-1. **Create a feature branch** from `main`:
-   ```bash
-   git checkout -b feat/your-feature-name
-   # or
-   git checkout -b fix/your-bug-fix
-   ```
-
-2. **Make your changes** following the coding standards:
-   - Use TypeScript with strict mode
-   - Follow existing code style
-   - Add JSDoc comments for public functions
-   - Update documentation if needed
-
-3. **Commit your changes** using conventional commits:
-   ```bash
-   git add .
-   git commit -m "feat: your feature description"
-   ```
-
-4. **Push to your fork**:
-   ```bash
-   git push origin feat/your-feature-name
-   ```
-
-5. **Create a Pull Request** on GitHub:
-   - Target the `main` branch
-   - Fill out the PR template
-   - Link any related issues
-   - Wait for CI checks to pass
-
-6. **Address review feedback**:
-   - Make requested changes
-   - Commit with conventional commits
-   - Push updates to your branch
-
-7. **Merge**: Once approved and all checks pass, a maintainer will merge your PR.
-
-### PR Checklist
-
-Before submitting your PR, ensure:
-
-- [ ] Code follows the project's coding standards
-- [ ] All commits follow conventional commits format
-- [ ] Linting passes (`npm run lint`)
-- [ ] Build succeeds (`npm run build`)
-- [ ] Tests pass (`npm run test`)
-- [ ] Changes are tested manually in Obsidian
-- [ ] Documentation is updated if needed
+---
 
 ## Release Process
 
-Releases are fully automated using [release-please](https://github.com/googleapis/release-please).
+We use **[release-please](https://github.com/googleapis/release-please)** for full automation.
 
-### Automated Workflow
+1.  **No Manual Versioning**: Do not edit `package.json` version manually.
+2.  **Merge to Main**: When a PR is merged, `release-please`:
+    -   Analyzes commits (feat/fix/etc).
+    -   Updates `CHANGELOG.md`.
+    -   Creates a **Release PR** (e.g., "chore: release 1.1.0").
+3.  **Publish**: Merging the **Release PR** triggers:
+    -   GitHub Release creation.
+    -   Asset upload (`main.js`, `manifest.json`, `styles.css`).
 
-1. **Conventional Commits**: When you merge a PR with conventional commits to `main`, release-please automatically:
-   - Analyzes commit messages
-   - Determines the next version number (based on commit types)
-   - Creates or updates a "Release PR"
+**Manual Step (Only if `minAppVersion` changes):**
+-   Update `versions.json` manually if you increased the minimum required Obsidian version in `manifest.json`.
 
-2. **Release PR**: This special PR:
-   - Updates version numbers in `package.json`, `manifest.json`, and `versions.json`
-   - Generates/updates `CHANGELOG.md` with all changes since last release
-   - Is automatically kept up-to-date as more commits are merged
+---
 
-3. **Publishing**: When the Release PR is merged:
-   - A GitHub release is automatically created
-   - The production build is compiled
-   - Required files (`main.js`, `manifest.json`, `styles.css`) are attached to the release
-   - The release is published
-
-### Version Bumping Rules
-
-- **Patch** (0.1.0 → 0.1.1): `fix`, `perf` commits
-- **Minor** (0.1.0 → 0.2.0): `feat` commits
-- **Major** (0.1.0 → 1.0.0): Any commit with `BREAKING CHANGE` in footer or `!` after type
-
-### No Manual Versioning
-
-**Do not manually update version numbers** in `package.json`, `manifest.json`, or `versions.json`. Release-please handles all version management automatically.
-
-## Questions?
-
-If you have questions about contributing:
-
-- Check existing [issues](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues)
-- Open a new issue with the "question" label
-- Review the [documentation](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/wiki)
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Happy Coding! 🚀

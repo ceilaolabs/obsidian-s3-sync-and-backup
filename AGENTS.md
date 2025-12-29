@@ -4,24 +4,7 @@
 
 **Obsidian S3 Sync & Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption.
 
-**Plugin ID:** `obsidian-s3-sync-and-backup`
-
-## Agent Workflow & Mindset
-
-### 🛠️ Workflow
-**Linting is mandatory.**
-- After **every** code modification or refactoring step, you must run:
-  ```bash
-  npm run lint
-  ```
-- You must fix any linting errors immediately. Do not leave them for later.
-
-### 🧠 Mindset & Quality
-**Code Perfection is a Myth.**
-- **Don't assume existing code is perfect.** Scrutinize it. If you see a bad pattern, fix it.
-- **Test Design:** Design tests based on *requirements* and *logic*, not just to mirror the current implementation.
-- **Fix the Code, Don't Hack the Test:** If a correctly designed test fails, it means the *code* is broken. Fix the code. **Never** overfit or weaken a test just to make it pass a buggy implementation.
-- **Root Cause Analysis:** When a bug is found, fix the root cause. Don't just patch it to work with existing bad patterns.
+**Plugin ID:** `s3-sync-and-backup`
 
 ## Quick Context
 
@@ -34,18 +17,30 @@
 | Bundler | esbuild |
 | Output | `main.js`, `manifest.json`, `styles.css` |
 
-## Build Commands
+## Agent Directives
 
-```bash
-npm install      # Install dependencies
-npm run dev      # Development build with watch
-npm run build    # Production build
-npm run lint     # Run ESLint
-npm run test     # Run unit tests
-```
+### Important
+1.  **Strict Linting Policy:**
+    - **After EVERY code modification**, you MUST run: `npm run lint`
+    - You must fix any linting errors **immediately**. Do not proceed until the linter passes.
+2.  **Up-to-Date Knowledge:**
+    - If you lack up-to-date information on any tech stack (e.g., latest AWS SDK), **use the `context7` tool** to find the latest documentation. Do not guess.
+3.  **Document Everything:**
+    - **More docs is better than less.** Document code, tests, GitHub Actions, and any logic thoroughly.
+    - Use JSDoc for all functions, classes, and non-trivial code blocks.
+4.  **Maintain Consistency:**
+    - When you change any logic or code, **update all related mentions** (docs, comments, tests, README, CONTRIBUTING, AGENTS, etc.).
 
-## Project Structure
+### Mindset & Quality
+**Code Perfection is a Myth.**
+- **Scrutinize Existing Code:** Don't assume it's perfect. If you see a bad pattern, fix it.
+- **Test Logic, Not Implementation:** Design tests based on requirements, not just to mirror the current code.
+- **Fix the Code:** If a valid test fails, the code is broken. **Never** weaken a test to pass buggy code.
+- **Root Cause Analysis:** Fix the root cause of bugs, don't patch symptoms.
 
+## Architecture & Structure
+
+### Project Structure
 ```
 obsidian-s3-sync-and-backup/
 ├── src/
@@ -86,11 +81,14 @@ obsidian-s3-sync-and-backup/
 │       ├── time.ts              # Time formatting (relative times)
 │       └── paths.ts             # Path normalization
 │
-├── tests/                       # Unit tests (Jest)
-│   ├── __mocks__/
-│   ├── crypto/
-│   ├── sync/
-│   └── utils/
+├── tests/                       # Unit & integration tests (Jest)
+│   ├── __mocks__/               # Obsidian API mocks
+│   ├── helpers/                 # S3 test utilities
+│   ├── backup/                  # Backup module tests
+│   ├── crypto/                  # Crypto module tests
+│   ├── storage/                 # Storage module tests
+│   ├── sync/                    # Sync module tests
+│   └── utils/                   # Utility tests
 │
 ├── manifest.json
 ├── package.json
@@ -98,15 +96,13 @@ obsidian-s3-sync-and-backup/
 └── tsconfig.json
 ```
 
-## S3 Bucket Structure
+### S3 Bucket Structure
 
 ```
 s3://bucket/
 ├── {syncPrefix}/                     # default: "vault"
 │   ├── .obsidian-s3-sync/
-│   │   ├── vault.enc                 # Encryption marker + salt
-│   │   ├── journal.json              # Sync state backup
-│   │   └── device-registry.json      # Known devices
+│   │   └── .vault.enc                # Encryption marker + salt
 │   └── [vault files mirrored here]
 │
 └── {backupPrefix}/                   # default: "backups"
@@ -115,130 +111,73 @@ s3://bucket/
         └── .backup-manifest.json
 ```
 
-## Testing
+## Development Standards
 
+### DOs
+- **Safe File Writes:** Use `Vault.process()` for atomic background modifications (prevents conflicts).
+- **Path Safety:** ALWAYS use `normalizePath()` on user inputs and file paths.
+- **Document Everything:** Use JSDoc comments.
+- **Strict TypeScript:** Use `"strict": true`.
+- **Obsidian API:** Use `this.app.vault` for vault operations.
+- **S3 Operations:** Use `@aws-sdk/client-s3` v3.
+- **Local State:** Use IndexedDB (`idb` library).
+- **Encryption:** `hash-wasm` (Argon2id/SHA-256) & `tweetnacl` (XSalsa20-Poly1305).
+- **Performance:** Batch disk access, debounce events, keep startup light.
+- **Async:** Use `async/await` everywhere.
+
+### DON'Ts
+- **No Global App:** Never use `window.app` or `app`. Use `this.app`.
+- **No `innerHTML`:** Security risk. Use DOM API (e.g., `createEl`, `setText`).
+- **No Hardcoded Styles:** Use CSS classes and variables.
+- **No Node.js APIs:** `fs`, `path`, `crypto` DO NOT work in Obsidian (browser env).
+- **No LocalStorage:** Use IndexedDB.
+- **No Blocking:** Never block the main thread.
+- **No Hardcoded Paths:** Use `settings.syncPrefix` / `settings.backupPrefix`.
+- **Security:** No network calls without user reason, no telemetry, no remote code execution.
+- **Mobile:** Do not assume desktop behavior. Test on mobile if possible.
+
+## Operational Procedures
+
+### Build & Test Commands
 ```bash
-npm run test           # Run all tests
+npm install      # Install dependencies
+npm run dev      # Development build with watch
+npm run build    # Production build
+npm run lint     # Run ESLint (Mandatory)
+npm run test     # Run unit tests
 npm run test:watch     # Watch mode
 npm run test:coverage  # With coverage
 ```
 
-Manual install for testing:
+### Manual Testing
 1. Run `npm run build`
-2. Copy `main.js`, `manifest.json`, `styles.css` to: `<Vault>/.obsidian/plugins/obsidian-s3-sync-and-backup/`
+2. Copy `main.js`, `manifest.json`, `styles.css` to: `<Vault>/.obsidian/plugins/s3-sync-and-backup/`
 3. Reload Obsidian and enable in **Settings → Community plugins**
 
-## Linting
-
-```bash
-npm run lint
-```
-
-Uses `eslint-plugin-obsidianmd` for Obsidian-specific rules:
+### Linting Rules
+Uses `eslint-plugin-obsidianmd`.
 - Use `Vault#configDir` instead of hardcoded `.obsidian`
 - Sentence case for UI text
 - Avoid unsafe casts to `TFile`/`TFolder`
 
-**Always fix linting errors before committing.**
-
-## Commit Messages
-
-This project uses **Conventional Commits** and **release-please** for automated releases.
-
-```
-<type>(<scope>): <subject>
-```
-
-**Types:**
+### Commit Strategy
+Use **Conventional Commits**:
 - `feat:` New feature (minor bump)
 - `fix:` Bug fix (patch bump)
-- `docs:` Documentation
-- `refactor:` Code refactoring
-- `perf:` Performance
-- `test:` Tests
-- `chore:` Maintenance
+- `docs:`, `refactor:`, `perf:`, `test:`, `chore:`
 
-**See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.**
+### Release & Versioning
+**Automated via release-please.**
+1. Merge PR with conventional commits to `main`.
+2. `release-please` creates a Release PR.
+3. Merge Release PR to publish.
 
-## DO
-
-**Documentation & Code Quality:**
-- Document everything with JSDoc comments
-- Use TypeScript with `"strict": true`
-- Keep functions small and focused
-
-**Obsidian Plugin Patterns:**
-- Keep `main.ts` minimal — delegate to modules
-- Split files at ~200-300 lines
-- Use `this.registerEvent()`, `this.registerInterval()` for auto-cleanup
-- Use `this.loadData()` / `this.saveData()` for settings persistence
-- Use stable command IDs — never rename after release
-- Provide sensible defaults for all settings
-
-**Technical:**
-- Use Obsidian API for vault operations (`this.app.vault`)
-- Use `@aws-sdk/client-s3` v3 for S3 operations
-- Use IndexedDB for local state persistence (`idb` library)
-- Use `hash-wasm` for Argon2id AND SHA-256
-- Use `tweetnacl` for XSalsa20-Poly1305 encryption
-- Use configurable prefixes for all S3 paths
-- Handle errors gracefully with retry logic
-- Use `async/await` over promise chains
-
-**Performance:**
-- Keep startup light — defer heavy work
-- Avoid long-running tasks during `onload`
-- Batch disk access, avoid excessive vault scans
-- Debounce/throttle file system event handlers
-
-## DON'T
-
-**Technical Restrictions:**
-- Don't use Node.js APIs (`fs`, `path`, `crypto` module) — runs in browser
-- Don't use `localStorage` — use IndexedDB instead
-- Don't store passphrase — only derived key in memory
-- Don't block main thread — use async/await
-- Don't hardcode paths — use `settings.syncPrefix` and `settings.backupPrefix`
-
-**Development Practices:**
-- Don't over-engineer — add complexity only when justified
-- Don't skip error handling
-- Don't assume network availability — handle offline gracefully
-- Don't commit build artifacts (`node_modules/`, `main.js`)
-
-**Security & Privacy:**
-- Don't make network calls without clear user-facing reason
-- Don't add hidden telemetry
-- Don't execute remote code
-- Don't access files outside the vault
-
-## Mobile Considerations
-
-- Test on iOS and Android where feasible
-- Don't assume desktop-only behavior
-- Be mindful of memory constraints
-- Set `isDesktopOnly: true` in manifest if desktop-only features required
-
-## Versioning
-
-**Automated via release-please.** Don't manually update versions.
-
-1. Use conventional commits when merging to main
-2. release-please creates a Release PR with version bumps and CHANGELOG
-3. Merge Release PR to publish GitHub release
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Plugin doesn't load | Ensure `main.js` and `manifest.json` at plugin folder root |
-| Build issues | Run `npm run build`, check for TypeScript errors |
-| Commands not appearing | Verify `addCommand` runs in `onload`, IDs are unique |
-| Settings not persisting | Ensure `loadData`/`saveData` are awaited |
+**Manual Step: `versions.json`**
+- Update ONLY when `minAppVersion` changes in `manifest.json`.
+- Add new mapping: `"plugin_version": "min_app_version"`.
+- Helper: `node scripts/version.mjs <version>`
 
 ## References
-
-- **PRD:** See `obsidian-s3-sync-and-backup.md` for complete requirements
 - **Obsidian API:** https://docs.obsidian.md
 - **Developer Policies:** https://docs.obsidian.md/Developer+policies
 - **Plugin Guidelines:** https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines
