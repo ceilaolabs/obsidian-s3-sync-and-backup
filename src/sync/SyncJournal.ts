@@ -182,22 +182,25 @@ export class SyncJournal {
      * Mark a file as synced
      *
      * @param path - File path
-     * @param localHash - Current local hash
-     * @param remoteHash - Current remote hash (usually same as local after sync)
+     * @param localHash - Current local hash (SHA-256)
+     * @param remoteHash - Current remote hash (SHA-256, usually same as local after sync)
      * @param localMtime - Local modification time
      * @param remoteMtime - Remote modification time
+     * @param remoteEtag - Optional S3 ETag for detecting remote changes
      */
     async markSynced(
         path: string,
         localHash: string,
         remoteHash: string,
         localMtime: number,
-        remoteMtime: number
+        remoteMtime: number,
+        remoteEtag?: string
     ): Promise<void> {
         const entry: SyncJournalEntry = {
             path,
             localHash,
             remoteHash,
+            remoteEtag,
             localMtime,
             remoteMtime,
             syncedAt: Date.now(),

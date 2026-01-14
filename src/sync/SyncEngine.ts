@@ -25,11 +25,14 @@ interface FileState {
     localExists: boolean;
     remoteExists: boolean;
     localHash?: string;
-    remoteHash?: string;
+    /** Current S3 ETag (MD5-based) - used for change detection */
+    remoteEtag?: string;
     localMtime?: number;
     remoteMtime?: number;
     journalLocalHash?: string;
     journalRemoteHash?: string;
+    /** Stored ETag from last sync - compared with current ETag */
+    journalRemoteEtag?: string;
     journalSyncedAt?: number;
 }
 
@@ -197,19 +200,22 @@ export class SyncEngine {
             if (!relativePath) continue;
             if (this.shouldExclude(relativePath)) continue;
 
+            // Clean ETag (remove quotes)
+            const etag = obj.etag?.replace(/"/g, '') || '';
+
             const existing = states.get(relativePath);
             if (existing) {
                 existing.remoteExists = true;
                 existing.remoteMtime = obj.lastModified.getTime();
-                // ETag can serve as hash (with some caveats for multipart uploads)
-                existing.remoteHash = obj.etag?.replace(/"/g, '') || '';
+                // Store ETag for change detection (not as hash)
+                existing.remoteEtag = etag;
             } else {
                 states.set(relativePath, {
                     path: relativePath,
                     localExists: false,
                     remoteExists: true,
                     remoteMtime: obj.lastModified.getTime(),
-                    remoteHash: obj.etag?.replace(/"/g, '') || '',
+                    remoteEtag: etag,
                 });
             }
         }
@@ -221,6 +227,7 @@ export class SyncEngine {
             if (existing) {
                 existing.journalLocalHash = entry.localHash;
                 existing.journalRemoteHash = entry.remoteHash;
+                existing.journalRemoteEtag = entry.remoteEtag;
                 existing.journalSyncedAt = entry.syncedAt;
             } else {
                 // File in journal but not local or remote - was deleted
@@ -230,6 +237,7 @@ export class SyncEngine {
                     remoteExists: false,
                     journalLocalHash: entry.localHash,
                     journalRemoteHash: entry.remoteHash,
+                    journalRemoteEtag: entry.remoteEtag,
                     journalSyncedAt: entry.syncedAt,
                 });
             }
@@ -252,7 +260,7 @@ export class SyncEngine {
                     action,
                     reason: this.getActionReason(state, action),
                     localHash: state.localHash,
-                    remoteHash: state.remoteHash,
+                    remoteHash: state.remoteEtag, // Use ETag as identifier
                 });
             }
         }
@@ -262,21 +270,40 @@ export class SyncEngine {
 
     /**
      * Determine what action to take for a file
+     *
+     * Uses SHA-256 hash for local change detection and S3 ETag for remote change detection.
+     * This avoids the hash algorithm mismatch problem (SHA-256 vs MD5 ETag).
      */
     private determineAction(state: FileState): SyncAction {
-        const { localExists, remoteExists, localHash, remoteHash, journalLocalHash, journalRemoteHash } = state;
+        const {
+            localExists,
+            remoteExists,
+            localHash,
+            remoteEtag,
+            journalLocalHash,
+            journalRemoteHash,
+            journalRemoteEtag,
+        } = state;
 
         // Both exist
         if (localExists && remoteExists) {
-            // Check if content is the same (using hashes)
-            if (localHash && remoteHash && localHash === remoteHash) {
-                return 'skip'; // Already in sync
-            }
+            // Check if local changed since last sync (compare SHA-256 hashes)
+            const localChanged = journalLocalHash !== undefined && localHash !== journalLocalHash;
 
-            // Check if local changed since last sync
-            const localChanged = journalLocalHash && localHash !== journalLocalHash;
             // Check if remote changed since last sync
-            const remoteChanged = journalRemoteHash && remoteHash !== journalRemoteHash;
+            // Use ETag comparison if available (preferred, as ETags are consistent)
+            // Fall back to checking if we have any journal entry at all
+            let remoteChanged = false;
+            if (journalRemoteEtag !== undefined && remoteEtag !== undefined) {
+                // Compare ETags - this is reliable
+                remoteChanged = remoteEtag !== journalRemoteEtag;
+            } else if (journalRemoteHash !== undefined) {
+                // No stored ETag (legacy entry) - we need to assume remote might have changed
+                // if local also changed, treat as conflict; otherwise download to be safe
+                // This only happens for entries created before ETag tracking was added
+                remoteChanged = localChanged; // Conservative: assume changed if local changed
+            }
+            // If no journal entry at all, handled below as first sync
 
             if (localChanged && remoteChanged) {
                 return 'conflict'; // Both changed
@@ -284,8 +311,8 @@ export class SyncEngine {
                 return 'upload'; // Only local changed
             } else if (remoteChanged) {
                 return 'download'; // Only remote changed
-            } else if (!journalLocalHash) {
-                // First sync - compare timestamps
+            } else if (journalLocalHash === undefined) {
+                // First sync for this file - compare timestamps
                 if ((state.localMtime || 0) > (state.remoteMtime || 0)) {
                     return 'upload';
                 } else {
@@ -297,7 +324,7 @@ export class SyncEngine {
 
         // Only exists locally
         if (localExists && !remoteExists) {
-            if (journalRemoteHash) {
+            if (journalRemoteHash !== undefined || journalRemoteEtag !== undefined) {
                 // Was synced before, now missing remotely = delete locally
                 return 'delete-local';
             } else {
@@ -308,7 +335,7 @@ export class SyncEngine {
 
         // Only exists remotely
         if (!localExists && remoteExists) {
-            if (journalLocalHash) {
+            if (journalLocalHash !== undefined) {
                 // Was synced before, now missing locally = delete remotely
                 return 'delete-remote';
             } else {
@@ -329,7 +356,10 @@ export class SyncEngine {
             case 'upload':
                 return state.journalLocalHash ? 'Local file modified' : 'New local file';
             case 'download':
-                return state.journalRemoteHash ? 'Remote file modified' : 'New remote file';
+                // Check if we had any prior sync (either ETag or hash)
+                return (state.journalRemoteEtag || state.journalRemoteHash)
+                    ? 'Remote file modified'
+                    : 'New remote file';
             case 'delete-local':
                 return 'Deleted remotely';
             case 'delete-remote':
@@ -352,7 +382,8 @@ export class SyncEngine {
                 await this.uploadFile(item.path);
                 break;
             case 'download':
-                await this.downloadFile(item.path);
+                // Pass the ETag (stored in remoteHash) for journal tracking
+                await this.downloadFile(item.path, item.remoteHash);
                 break;
             case 'delete-local':
                 await this.deleteLocalFile(item.path);
@@ -381,16 +412,20 @@ export class SyncEngine {
 
         // TODO: Encrypt content if encryption enabled
 
-        await this.s3Provider.uploadFile(key, content);
+        // Upload and get the ETag
+        const etag = await this.s3Provider.uploadFile(key, content);
 
-        // Update journal
-        await this.journal.markSynced(path, hash, hash, file.stat.mtime, Date.now());
+        // Update journal with hash and ETag
+        await this.journal.markSynced(path, hash, hash, file.stat.mtime, Date.now(), etag);
     }
 
     /**
      * Download a file from S3
+     *
+     * @param path - Local file path
+     * @param remoteEtag - S3 ETag for tracking remote state
      */
-    private async downloadFile(path: string): Promise<void> {
+    private async downloadFile(path: string, remoteEtag?: string): Promise<void> {
         const key = this.localPathToS3Key(path);
 
         // Download content
@@ -410,13 +445,13 @@ export class SyncEngine {
             await this.app.vault.create(path, content);
         }
 
-        // Update journal
+        // Update journal with hash and ETag
         const hash = await hashContent(content);
         const downloadedFile = this.app.vault.getAbstractFileByPath(path);
         if (!(downloadedFile instanceof TFile)) {
             throw new Error(`Downloaded file not found: ${path}`);
         }
-        await this.journal.markSynced(path, hash, hash, downloadedFile.stat.mtime, Date.now());
+        await this.journal.markSynced(path, hash, hash, downloadedFile.stat.mtime, Date.now(), remoteEtag);
     }
 
     /**

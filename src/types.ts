@@ -162,6 +162,8 @@ export interface SyncJournalEntry {
 	localHash: string;
 	/** SHA-256 hash of remote file content */
 	remoteHash: string;
+	/** S3 ETag for detecting remote changes (MD5-based) */
+	remoteEtag?: string;
 	/** Local file modification time (epoch ms) */
 	localMtime: number;
 	/** Remote file modification time (epoch ms) */

@@ -18,6 +18,7 @@ import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { SnapshotCreator } from './backup/SnapshotCreator';
 import { RetentionManager } from './backup/RetentionManager';
+import { BackupScheduler } from './backup/BackupScheduler';
 import { getOrCreateDeviceId } from './crypto/VaultMarker';
 
 /**
@@ -51,6 +52,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 	/** Backup retention manager */
 	private retentionManager: RetentionManager | null = null;
+
+	/** Backup scheduler for periodic backups */
+	private backupScheduler: BackupScheduler | null = null;
 
 	/** Device ID for backup tracking */
 	private deviceId: string = '';
@@ -124,6 +128,21 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Initialize backup components
 		this.snapshotCreator = new SnapshotCreator(this.app, this.s3Provider, this.settings);
 		this.retentionManager = new RetentionManager(this.s3Provider, this.settings);
+
+		// Initialize backup scheduler
+		this.backupScheduler = new BackupScheduler(this, this.settings);
+		this.backupScheduler.setCallbacks({
+			onBackupTrigger: async () => {
+				await this.runScheduledBackup();
+			},
+			onBackupComplete: (success) => {
+				this.statusBar?.updateBackupState({
+					status: success ? 'completed' : 'error',
+					lastBackupTime: success ? Date.now() : null,
+					isRunning: false,
+				});
+			},
+		});
 
 		// Update status bar based on settings
 		this.updateStatusBarFromSettings();
@@ -215,6 +234,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 		if (this.retentionManager) {
 			this.retentionManager.updateSettings(this.settings);
 		}
+		if (this.backupScheduler) {
+			this.backupScheduler.updateSettings(this.settings);
+		}
 	}
 
 	/**
@@ -270,6 +292,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 				this.syncScheduler?.start();
 			}
 		}
+
+		// Start backup scheduler if backups are enabled
+		if (this.settings.backupEnabled) {
+			void this.backupScheduler?.start();
+		}
 	}
 
 	/**
@@ -278,6 +305,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	private stopSyncServices(): void {
 		this.changeTracker?.stopTracking();
 		this.syncScheduler?.stop();
+		this.backupScheduler?.stop();
 	}
 
 	/**
@@ -440,6 +468,60 @@ export default class S3SyncBackupPlugin extends Plugin {
 				isRunning: false,
 				lastError: errorMessage,
 			});
+		} finally {
+			this.isBackupRunning = false;
+		}
+	}
+
+	/**
+	 * Run scheduled backup (called by BackupScheduler)
+	 * This is similar to triggerManualBackup but without user notices
+	 */
+	private async runScheduledBackup(): Promise<void> {
+		if (this.isBackupRunning) {
+			if (this.settings.debugLogging) {
+				console.debug('[S3 Backup] Skipping scheduled backup - already running');
+			}
+			return;
+		}
+
+		if (!this.snapshotCreator || !this.s3Provider) {
+			console.error('[S3 Backup] Backup system not initialized');
+			return;
+		}
+
+		this.isBackupRunning = true;
+
+		// Update status bar
+		this.statusBar?.updateBackupState({
+			status: 'running',
+			isRunning: true,
+		});
+
+		try {
+			// Create backup snapshot
+			const vaultName = this.app.vault.getName();
+			const result = await this.snapshotCreator.createSnapshot(this.deviceId, vaultName);
+
+			if (result.success) {
+				if (this.settings.debugLogging) {
+					console.debug(`[S3 Backup] Scheduled backup completed: ${result.filesBackedUp} files`);
+				}
+
+				// Apply retention policy
+				if (this.settings.retentionEnabled && this.retentionManager) {
+					const deleted = await this.retentionManager.applyRetentionPolicy();
+					if (deleted > 0 && this.settings.debugLogging) {
+						console.debug(`[S3 Backup] Retention: deleted ${deleted} old backups`);
+					}
+				}
+			} else {
+				const errorMsg = result.errors.length > 0 ? result.errors[0] : 'Unknown error';
+				console.error(`[S3 Backup] Scheduled backup failed: ${errorMsg}`);
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			console.error(`[S3 Backup] Scheduled backup failed: ${errorMessage}`);
 		} finally {
 			this.isBackupRunning = false;
 		}

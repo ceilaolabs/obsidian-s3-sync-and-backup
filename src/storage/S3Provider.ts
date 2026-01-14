@@ -202,20 +202,24 @@ export class S3Provider {
      * @param key - Full S3 key for destination
      * @param content - File content as Uint8Array or string
      * @param contentType - Optional MIME type
+     * @returns The ETag of the uploaded object (for change tracking)
      */
-    async uploadFile(key: string, content: Uint8Array | string, contentType?: string): Promise<void> {
+    async uploadFile(key: string, content: Uint8Array | string, contentType?: string): Promise<string> {
         const client = this.getClient();
 
         const body = typeof content === 'string'
             ? new TextEncoder().encode(content)
             : content;
 
-        await client.send(new PutObjectCommand({
+        const response = await client.send(new PutObjectCommand({
             Bucket: this.settings.bucket,
             Key: key,
             Body: body,
             ContentType: contentType,
         }));
+
+        // Return cleaned ETag (remove quotes)
+        return response.ETag?.replace(/"/g, '') || '';
     }
 
     /**
