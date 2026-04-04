@@ -12,6 +12,7 @@ import {
     PutObjectCommand,
     DeleteObjectCommand,
     HeadBucketCommand,
+    HeadObjectCommand,
     DeleteObjectsCommand,
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
@@ -278,15 +279,69 @@ export class S3Provider {
     async fileExists(key: string): Promise<boolean> {
         try {
             const client = this.getClient();
-            await client.send(new GetObjectCommand({
+            await client.send(new HeadObjectCommand({
                 Bucket: this.settings.bucket,
                 Key: key,
             }));
             return true;
         } catch (error) {
             const err = error as Error & { name?: string };
-            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound' || err.name === 'NotFound') {
                 return false;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Get the ETag of a file without downloading it
+     *
+     * Used for pre-flight validation before destructive operations.
+     *
+     * @param key - Full S3 key
+     * @returns ETag string (without quotes) or null if file doesn't exist
+     */
+    async getFileEtag(key: string): Promise<string | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new HeadObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+            // Return cleaned ETag (remove quotes)
+            return response.ETag?.replace(/"/g, '') || null;
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Get file metadata (ETag, size, lastModified) without downloading content
+     *
+     * @param key - Full S3 key
+     * @returns Object info or null if file doesn't exist
+     */
+    async getFileMetadata(key: string): Promise<S3ObjectInfo | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new HeadObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+            return {
+                key,
+                size: response.ContentLength || 0,
+                lastModified: response.LastModified || new Date(),
+                etag: response.ETag?.replace(/"/g, ''),
+            };
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
             }
             throw error;
         }

@@ -34,6 +34,16 @@ interface FileState {
     /** Stored ETag from last sync - compared with current ETag */
     journalRemoteEtag?: string;
     journalSyncedAt?: number;
+    /** Device that last modified this file */
+    journalLastModifiedBy?: string;
+}
+
+/**
+ * Extended sync plan item with expected state for pre-flight validation
+ */
+interface ExtendedSyncPlanItem extends SyncPlanItem {
+    /** Expected ETag for pre-flight validation on delete operations */
+    expectedRemoteEtag?: string;
 }
 
 /**
@@ -47,6 +57,8 @@ export class SyncEngine {
     private settings: S3SyncBackupSettings;
     private isSyncing = false;
     private debugLogging = false;
+    /** Unique device ID for tracking which device made changes */
+    private deviceId: string;
 
     constructor(
         app: App,
@@ -61,6 +73,24 @@ export class SyncEngine {
         this.changeTracker = changeTracker;
         this.settings = settings;
         this.debugLogging = settings.debugLogging;
+        // Generate or retrieve a unique device ID
+        this.deviceId = this.getOrCreateDeviceId();
+    }
+
+    /**
+     * Get or create a unique device identifier
+     * Uses Obsidian's vault-scoped localStorage API
+     */
+    private getOrCreateDeviceId(): string {
+        const storageKey = 's3-sync-device-id';
+        const storedValue = this.app.loadLocalStorage(storageKey) as string | null;
+        let deviceId: string = storedValue ?? '';
+        if (!deviceId) {
+            // Generate a unique ID: timestamp + random string
+            deviceId = `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+            this.app.saveLocalStorage(storageKey, deviceId);
+        }
+        return deviceId;
     }
 
     /**
@@ -89,6 +119,10 @@ export class SyncEngine {
         const startedAt = Date.now();
         this.isSyncing = true;
 
+        // Notify change tracker that sync is in progress
+        // This prevents race conditions with vault events
+        this.changeTracker.setSyncInProgress(true);
+
         const result: SyncResult = {
             success: false,
             startedAt,
@@ -101,19 +135,40 @@ export class SyncEngine {
         };
 
         try {
-            this.log('Starting sync...');
+            // Always log sync start (important for debugging)
+            console.debug('[S3 Sync] Starting sync...');
 
             // 1. Build file state map
             const fileStates = await this.buildFileStateMap();
-            this.log(`Found ${fileStates.size} unique file paths`);
+            console.debug(`[S3 Sync] Found ${fileStates.size} unique file paths`);
+
+            // Log detailed state in debug mode
+            if (this.debugLogging) {
+                for (const [path, state] of fileStates) {
+                    console.debug(`[S3 Sync] File state: ${path}`, {
+                        localExists: state.localExists,
+                        remoteExists: state.remoteExists,
+                        journalLocalHash: state.journalLocalHash ? 'set' : 'undefined',
+                        journalRemoteEtag: state.journalRemoteEtag ? 'set' : 'undefined',
+                    });
+                }
+            }
 
             // 2. Generate sync plan
             const syncPlan = this.generateSyncPlan(fileStates);
-            this.log(`Sync plan: ${syncPlan.length} actions`);
+            console.debug(`[S3 Sync] Sync plan: ${syncPlan.length} actions`);
+
+            // Log sync plan details
+            for (const item of syncPlan) {
+                console.debug(`[S3 Sync] Planned: ${item.action} - ${item.path} (${item.reason})`);
+            }
 
             // 3. Execute sync plan
             for (const item of syncPlan) {
                 try {
+                    // Mark the path as syncing to prevent ChangeTracker interference
+                    this.changeTracker.markPathSyncing(item.path);
+
                     await this.executeAction(item);
 
                     switch (item.action) {
@@ -133,6 +188,7 @@ export class SyncEngine {
                     }
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    console.error(`[S3 Sync] Error executing ${item.action} for ${item.path}:`, errorMessage);
                     result.errors.push({
                         path: item.path,
                         action: item.action,
@@ -146,10 +202,11 @@ export class SyncEngine {
             this.changeTracker.clearPendingChanges();
 
             result.success = result.errors.length === 0;
-            this.log(`Sync completed: ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted, ${result.conflicts.length} conflicts`);
+            console.debug(`[S3 Sync] Sync completed: ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted, ${result.conflicts.length} conflicts, ${result.errors.length} errors`);
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            console.error('[S3 Sync] Sync failed:', errorMessage);
             result.errors.push({
                 path: '',
                 action: 'skip',
@@ -158,6 +215,8 @@ export class SyncEngine {
             });
         } finally {
             this.isSyncing = false;
+            // Notify change tracker that sync is complete
+            this.changeTracker.setSyncInProgress(false);
             result.completedAt = Date.now();
         }
 
@@ -229,6 +288,7 @@ export class SyncEngine {
                 existing.journalRemoteHash = entry.remoteHash;
                 existing.journalRemoteEtag = entry.remoteEtag;
                 existing.journalSyncedAt = entry.syncedAt;
+                existing.journalLastModifiedBy = entry.lastModifiedBy;
             } else {
                 // File in journal but not local or remote - was deleted
                 states.set(entry.path, {
@@ -239,6 +299,7 @@ export class SyncEngine {
                     journalRemoteHash: entry.remoteHash,
                     journalRemoteEtag: entry.remoteEtag,
                     journalSyncedAt: entry.syncedAt,
+                    journalLastModifiedBy: entry.lastModifiedBy,
                 });
             }
         }
@@ -248,20 +309,30 @@ export class SyncEngine {
 
     /**
      * Generate sync plan based on file states
+     *
+     * Includes expected state for pre-flight validation on destructive operations.
      */
-    private generateSyncPlan(states: Map<string, FileState>): SyncPlanItem[] {
-        const plan: SyncPlanItem[] = [];
+    private generateSyncPlan(states: Map<string, FileState>): ExtendedSyncPlanItem[] {
+        const plan: ExtendedSyncPlanItem[] = [];
 
         for (const [path, state] of states) {
             const action = this.determineAction(state);
             if (action !== 'skip') {
-                plan.push({
+                const item: ExtendedSyncPlanItem = {
                     path,
                     action,
                     reason: this.getActionReason(state, action),
                     localHash: state.localHash,
                     remoteHash: state.remoteEtag, // Use ETag as identifier
-                });
+                };
+
+                // For delete operations, store expected state for pre-flight validation
+                if (action === 'delete-remote') {
+                    // When deleting remotely, we expect the file to still match what we knew
+                    item.expectedRemoteEtag = state.journalRemoteEtag;
+                }
+
+                plan.push(item);
             }
         }
 
@@ -273,6 +344,11 @@ export class SyncEngine {
      *
      * Uses SHA-256 hash for local change detection and S3 ETag for remote change detection.
      * This avoids the hash algorithm mismatch problem (SHA-256 vs MD5 ETag).
+     *
+     * IMPORTANT: The deletion logic is designed to be SAFE for multi-device scenarios:
+     * - We only delete locally if the remote was DEFINITELY deleted (file gone, was synced before)
+     * - We only delete remotely if the local was DEFINITELY deleted (file gone, was synced before)
+     *   AND the remote hasn't changed since we last saw it (ETag matches)
      */
     private determineAction(state: FileState): SyncAction {
         const {
@@ -322,10 +398,29 @@ export class SyncEngine {
             return 'skip';
         }
 
-        // Only exists locally
+        // Only exists locally (remote is missing)
         if (localExists && !remoteExists) {
-            if (journalRemoteHash !== undefined || journalRemoteEtag !== undefined) {
-                // Was synced before, now missing remotely = delete locally
+            // Check if we have a journal entry (file was previously synced)
+            const wasPreviouslySynced = journalRemoteHash !== undefined || journalRemoteEtag !== undefined;
+
+            if (wasPreviouslySynced) {
+                // File was synced before, now missing remotely.
+                // This could mean:
+                // 1. Another device deleted it (we should delete locally)
+                // 2. S3 had an issue (we should re-upload)
+                // 3. User deleted via S3 console (we should delete locally)
+                //
+                // SAFETY CHECK: If the local file has been modified since last sync,
+                // treat it as a new file (upload) to avoid data loss.
+                const localModifiedSinceSync = localHash !== journalLocalHash;
+
+                if (localModifiedSinceSync) {
+                    // Local file was modified - treat as new upload to avoid losing changes
+                    this.log(`File ${state.path}: local modified, remote missing - uploading to preserve changes`);
+                    return 'upload';
+                }
+
+                // Local unchanged - safe to delete as remote deletion
                 return 'delete-local';
             } else {
                 // New local file = upload
@@ -333,18 +428,44 @@ export class SyncEngine {
             }
         }
 
-        // Only exists remotely
+        // Only exists remotely (local is missing)
         if (!localExists && remoteExists) {
-            if (journalLocalHash !== undefined) {
-                // Was synced before, now missing locally = delete remotely
-                return 'delete-remote';
+            // Check if we have a journal entry (file was previously synced)
+            const wasPreviouslySynced = journalLocalHash !== undefined;
+
+            if (wasPreviouslySynced) {
+                // File was synced before, now missing locally.
+                // This could mean:
+                // 1. This device deleted it (we should delete remotely)
+                // 2. User deleted via file manager (we should delete remotely)
+                //
+                // SAFETY CHECK: Only delete remotely if the remote file hasn't changed
+                // since we last synced. If it changed, another device modified it and
+                // we should download instead.
+                const remoteUnchanged = journalRemoteEtag !== undefined && remoteEtag === journalRemoteEtag;
+                const remoteChanged = journalRemoteEtag !== undefined && remoteEtag !== journalRemoteEtag;
+
+                if (remoteChanged) {
+                    // Remote was modified by another device - download instead of delete
+                    this.log(`File ${state.path}: local missing, remote changed - downloading modified version`);
+                    return 'download';
+                }
+
+                if (remoteUnchanged) {
+                    // Remote unchanged since last sync - safe to delete
+                    return 'delete-remote';
+                }
+
+                // No ETag info (legacy entry) - be conservative, download to avoid data loss
+                this.log(`File ${state.path}: local missing, no ETag info - downloading to be safe`);
+                return 'download';
             } else {
                 // New remote file = download
                 return 'download';
             }
         }
 
-        // Neither exists (was in journal) - cleanup
+        // Neither exists (was in journal) - cleanup journal entry
         return 'skip';
     }
 
@@ -373,8 +494,11 @@ export class SyncEngine {
 
     /**
      * Execute a single sync action
+     *
+     * For delete operations, performs pre-flight validation to ensure the file
+     * hasn't changed since we decided to delete it.
      */
-    private async executeAction(item: SyncPlanItem): Promise<void> {
+    private async executeAction(item: ExtendedSyncPlanItem): Promise<void> {
         this.log(`Executing ${item.action} for ${item.path}: ${item.reason}`);
 
         switch (item.action) {
@@ -389,16 +513,19 @@ export class SyncEngine {
                 await this.deleteLocalFile(item.path);
                 break;
             case 'delete-remote':
-                await this.deleteRemoteFile(item.path);
+                // Pre-flight validation: ensure remote hasn't changed since we decided to delete
+                await this.deleteRemoteFile(item.path, item.expectedRemoteEtag);
                 break;
             case 'conflict':
-                await this.handleConflict(item.path);
+                await this.handleConflict(item.path, item.remoteHash);
                 break;
         }
     }
 
     /**
      * Upload a file to S3
+     *
+     * Tracks this device as the modifier of the file.
      */
     private async uploadFile(path: string): Promise<void> {
         const file = this.app.vault.getAbstractFileByPath(path);
@@ -415,18 +542,29 @@ export class SyncEngine {
         // Upload and get the ETag
         const etag = await this.s3Provider.uploadFile(key, content);
 
-        // Update journal with hash and ETag
-        await this.journal.markSynced(path, hash, hash, file.stat.mtime, Date.now(), etag);
+        // Update journal with hash, ETag, and device ID
+        await this.journal.markSynced(path, hash, hash, file.stat.mtime, Date.now(), etag, this.deviceId);
     }
 
     /**
      * Download a file from S3
      *
+     * If remoteEtag is not provided, fetches it from S3 metadata to ensure
+     * we always track the remote state properly.
+     *
      * @param path - Local file path
-     * @param remoteEtag - S3 ETag for tracking remote state
+     * @param remoteEtag - S3 ETag for tracking remote state (optional, will be fetched if not provided)
      */
     private async downloadFile(path: string, remoteEtag?: string): Promise<void> {
         const key = this.localPathToS3Key(path);
+
+        // If ETag not provided, fetch it to ensure proper tracking
+        let etag = remoteEtag;
+        if (!etag) {
+            const metadata = await this.s3Provider.getFileMetadata(key);
+            etag = metadata?.etag;
+            this.log(`Fetched ETag for ${path}: ${etag}`);
+        }
 
         // Download content
         const content = await this.s3Provider.downloadFileAsText(key);
@@ -451,7 +589,7 @@ export class SyncEngine {
         if (!(downloadedFile instanceof TFile)) {
             throw new Error(`Downloaded file not found: ${path}`);
         }
-        await this.journal.markSynced(path, hash, hash, downloadedFile.stat.mtime, Date.now(), remoteEtag);
+        await this.journal.markSynced(path, hash, hash, downloadedFile.stat.mtime, Date.now(), etag, this.deviceId);
     }
 
     /**
@@ -466,18 +604,60 @@ export class SyncEngine {
     }
 
     /**
-     * Delete a remote file
+     * Delete a remote file with pre-flight validation
+     *
+     * Before deleting, verifies the remote file hasn't been modified since we
+     * decided to delete it. This prevents accidental deletion of files that
+     * another device has modified.
+     *
+     * @param path - Local file path
+     * @param expectedEtag - Expected ETag from when we decided to delete (for validation)
      */
-    private async deleteRemoteFile(path: string): Promise<void> {
+    private async deleteRemoteFile(path: string, expectedEtag?: string): Promise<void> {
         const key = this.localPathToS3Key(path);
+
+        // Pre-flight validation: check if remote file still exists and matches expected state
+        if (expectedEtag) {
+            const currentEtag = await this.s3Provider.getFileEtag(key);
+
+            if (currentEtag === null) {
+                // File already deleted - just clean up journal
+                this.log(`File ${path} already deleted from remote, cleaning up journal`);
+                await this.journal.deleteEntry(path);
+                return;
+            }
+
+            if (currentEtag !== expectedEtag) {
+                // File was modified by another device - DON'T delete, download instead
+                this.log(`ABORT DELETE: File ${path} was modified remotely (expected ETag: ${expectedEtag}, actual: ${currentEtag})`);
+                throw new Error(`Remote file ${path} was modified by another device. Sync again to download the new version.`);
+            }
+        } else {
+            // No expected ETag - check if file still exists
+            const exists = await this.s3Provider.fileExists(key);
+            if (!exists) {
+                // File already deleted - just clean up journal
+                this.log(`File ${path} already deleted from remote, cleaning up journal`);
+                await this.journal.deleteEntry(path);
+                return;
+            }
+            // Without expected ETag, we proceed with delete but log a warning
+            this.log(`WARNING: Deleting ${path} without ETag validation - potential race condition`);
+        }
+
+        // Safe to delete
         await this.s3Provider.deleteFile(key);
         await this.journal.deleteEntry(path);
+        this.log(`Deleted remote file: ${path}`);
     }
 
     /**
      * Handle a conflict by creating LOCAL_ and REMOTE_ versions
+     *
+     * @param path - File path with conflict
+     * @param remoteEtag - Current remote ETag for tracking
      */
-    private async handleConflict(path: string): Promise<void> {
+    private async handleConflict(path: string, remoteEtag?: string): Promise<void> {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (!(file instanceof TFile)) return;
 
@@ -495,13 +675,21 @@ export class SyncEngine {
 
         // Download remote as REMOTE_
         const key = this.localPathToS3Key(path);
+
+        // Get current ETag if not provided
+        let etag = remoteEtag;
+        if (!etag) {
+            const metadata = await this.s3Provider.getFileMetadata(key);
+            etag = metadata?.etag;
+        }
+
         const remoteContent = await this.s3Provider.downloadFileAsText(key);
         await this.app.vault.create(remotePath, remoteContent);
 
-        // Update journal to mark as conflict
+        // Update journal to mark as conflict with ETag
         const localHash = await hashContent(localContent);
         const remoteHash = await hashContent(remoteContent);
-        await this.journal.markConflict(path, localHash, remoteHash);
+        await this.journal.markConflict(path, localHash, remoteHash, etag);
 
         // Notify user
         new Notice(`Conflict detected: ${fileName}\nBoth LOCAL_ and REMOTE_ versions saved.`);
@@ -546,13 +734,22 @@ export class SyncEngine {
 
     /**
      * Check if a path should be excluded
+     *
+     * Supports glob patterns:
+     * - `*` matches any characters except /
+     * - `**` matches any characters including /
+     * - Patterns are matched against the FULL path
+     * - Use `**\/` prefix for recursive matching (e.g., `**\/*.tmp` matches any .tmp file)
      */
     private shouldExclude(path: string): boolean {
         return this.settings.excludePatterns.some((pattern) => {
+            // Convert glob pattern to regex
             const regexPattern = pattern
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '.*')
-                .replace(/\*/g, '[^/]*');
+                .replace(/\./g, '\\.')  // Escape dots
+                .replace(/\*\*/g, '<<DOUBLESTAR>>')  // Temp placeholder for **
+                .replace(/\*/g, '[^/]*')  // * matches non-separator chars
+                .replace(/<<DOUBLESTAR>>/g, '.*');  // ** matches anything
+
             const regex = new RegExp(`^${regexPattern}$`);
             return regex.test(path);
         });

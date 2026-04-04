@@ -34,6 +34,19 @@ export class ChangeTracker {
     private debounceMs = 300;
     private isTracking = false;
 
+    /**
+     * Flag to pause journal updates during sync operations.
+     * When true, file events are still tracked but journal is not updated.
+     * This prevents race conditions between sync and change tracking.
+     */
+    private isSyncInProgress = false;
+
+    /**
+     * Paths that are currently being synced (downloaded/uploaded).
+     * Changes to these paths are ignored to prevent race conditions.
+     */
+    private syncingPaths: Set<string> = new Set();
+
     // Event handlers bound to this
     private onCreateHandler: (file: TAbstractFile) => void;
     private onModifyHandler: (file: TAbstractFile) => void;
@@ -49,6 +62,33 @@ export class ChangeTracker {
         this.onModifyHandler = (file) => { void this.onFileModify(file); };
         this.onDeleteHandler = (file) => { void this.onFileDelete(file); };
         this.onRenameHandler = (file, oldPath) => { void this.onFileRename(file, oldPath); };
+    }
+
+    /**
+     * Mark that a sync operation is in progress.
+     * During sync, journal updates are paused to prevent race conditions.
+     */
+    setSyncInProgress(inProgress: boolean): void {
+        this.isSyncInProgress = inProgress;
+        if (!inProgress) {
+            // Clear syncing paths when sync completes
+            this.syncingPaths.clear();
+        }
+    }
+
+    /**
+     * Mark a path as currently being synced.
+     * Events for this path will be ignored until sync completes.
+     */
+    markPathSyncing(path: string): void {
+        this.syncingPaths.add(path);
+    }
+
+    /**
+     * Check if a path is currently being synced
+     */
+    private isPathSyncing(path: string): boolean {
+        return this.syncingPaths.has(path) || this.isSyncInProgress;
     }
 
     /**
@@ -92,14 +132,21 @@ export class ChangeTracker {
 
     /**
      * Check if a file should be excluded from tracking
+     *
+     * Supports glob patterns:
+     * - `*` matches any characters except /
+     * - `**` matches any characters including /
+     * - Patterns are matched against the FULL path
      */
     private shouldExclude(path: string): boolean {
         return this.excludePatterns.some((pattern) => {
-            // Simple glob matching - supports * and **
+            // Convert glob pattern to regex
             const regexPattern = pattern
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '.*')
-                .replace(/\*/g, '[^/]*');
+                .replace(/\./g, '\\.')  // Escape dots
+                .replace(/\*\*/g, '<<DOUBLESTAR>>')  // Temp placeholder for **
+                .replace(/\*/g, '[^/]*')  // * matches non-separator chars
+                .replace(/<<DOUBLESTAR>>/g, '.*');  // ** matches anything
+
             const regex = new RegExp(`^${regexPattern}$`);
             return regex.test(path);
         });
@@ -111,6 +158,12 @@ export class ChangeTracker {
     private async onFileCreate(file: TAbstractFile): Promise<void> {
         if (!(file instanceof TFile)) return;
         if (this.shouldExclude(file.path)) return;
+
+        // Skip journal update if this path is being synced
+        // This prevents race conditions during download operations
+        if (this.isPathSyncing(file.path)) {
+            return;
+        }
 
         this.addPendingChange({
             path: file.path,
@@ -129,6 +182,12 @@ export class ChangeTracker {
         if (!(file instanceof TFile)) return;
         if (this.shouldExclude(file.path)) return;
 
+        // Skip journal update if this path is being synced
+        // This prevents race conditions during upload/download operations
+        if (this.isPathSyncing(file.path)) {
+            return;
+        }
+
         this.addPendingChange({
             path: file.path,
             type: 'modify',
@@ -145,6 +204,12 @@ export class ChangeTracker {
     private async onFileDelete(file: TAbstractFile): Promise<void> {
         if (!(file instanceof TFile)) return;
         if (this.shouldExclude(file.path)) return;
+
+        // Skip journal update if this path is being synced
+        // This prevents race conditions during delete operations
+        if (this.isPathSyncing(file.path)) {
+            return;
+        }
 
         this.addPendingChange({
             path: file.path,

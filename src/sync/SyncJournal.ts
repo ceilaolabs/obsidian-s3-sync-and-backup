@@ -187,6 +187,7 @@ export class SyncJournal {
      * @param localMtime - Local modification time
      * @param remoteMtime - Remote modification time
      * @param remoteEtag - Optional S3 ETag for detecting remote changes
+     * @param lastModifiedBy - Optional device ID that modified this file
      */
     async markSynced(
         path: string,
@@ -194,7 +195,8 @@ export class SyncJournal {
         remoteHash: string,
         localMtime: number,
         remoteMtime: number,
-        remoteEtag?: string
+        remoteEtag?: string,
+        lastModifiedBy?: string
     ): Promise<void> {
         const entry: SyncJournalEntry = {
             path,
@@ -205,12 +207,16 @@ export class SyncJournal {
             remoteMtime,
             syncedAt: Date.now(),
             status: 'synced',
+            lastModifiedBy,
         };
         await this.setEntry(entry);
     }
 
     /**
      * Mark a file as pending (local changes)
+     *
+     * Preserves remote state (remoteHash, remoteEtag) from existing entry
+     * so we can still detect remote changes during sync.
      *
      * @param path - File path
      * @param localHash - New local hash
@@ -223,10 +229,12 @@ export class SyncJournal {
             path,
             localHash,
             remoteHash: existing?.remoteHash || '',
+            remoteEtag: existing?.remoteEtag, // Preserve ETag for remote change detection
             localMtime,
             remoteMtime: existing?.remoteMtime || 0,
             syncedAt: existing?.syncedAt || 0,
             status: 'pending',
+            lastModifiedBy: existing?.lastModifiedBy, // Preserve device info
         };
         await this.setEntry(entry);
     }
@@ -234,21 +242,32 @@ export class SyncJournal {
     /**
      * Mark a file as in conflict
      *
+     * Preserves remoteEtag from existing entry for future conflict resolution.
+     *
      * @param path - File path
      * @param localHash - Local hash
      * @param remoteHash - Remote hash
+     * @param remoteEtag - Optional new remote ETag (if known)
      */
-    async markConflict(path: string, localHash: string, remoteHash: string): Promise<void> {
+    async markConflict(
+        path: string,
+        localHash: string,
+        remoteHash: string,
+        remoteEtag?: string
+    ): Promise<void> {
         const existing = await this.getEntry(path);
 
         const entry: SyncJournalEntry = {
             path,
             localHash,
             remoteHash,
+            // Use provided ETag if available, otherwise preserve existing
+            remoteEtag: remoteEtag ?? existing?.remoteEtag,
             localMtime: existing?.localMtime || Date.now(),
             remoteMtime: existing?.remoteMtime || Date.now(),
             syncedAt: existing?.syncedAt || 0,
             status: 'conflict',
+            lastModifiedBy: existing?.lastModifiedBy, // Preserve device info
         };
         await this.setEntry(entry);
     }
