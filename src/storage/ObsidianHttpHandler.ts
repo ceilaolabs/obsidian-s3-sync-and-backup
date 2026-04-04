@@ -84,12 +84,14 @@ export class ObsidianHttpHandler {
                 }
             }
 
-            // Create HttpResponse
-            const response = new HttpResponse({
-                statusCode: obsidianResponse.status,
-                headers: responseHeaders,
-                body: new Uint8Array(obsidianResponse.arrayBuffer),
-            });
+			const responseBody = this.createResponseBody(obsidianResponse.arrayBuffer);
+
+			// Create HttpResponse
+			const response = new HttpResponse({
+				statusCode: obsidianResponse.status,
+				headers: responseHeaders,
+				body: responseBody,
+			});
 
             return { response };
         } catch (error) {
@@ -103,7 +105,7 @@ export class ObsidianHttpHandler {
     /**
      * Build full URL from HttpRequest
      */
-    private buildUrl(request: HttpRequest): string {
+	private buildUrl(request: HttpRequest): string {
         // Get protocol without trailing colon if present
         let protocol = request.protocol || 'https:';
         if (!protocol.endsWith(':')) {
@@ -149,8 +151,30 @@ export class ObsidianHttpHandler {
             }
         }
 
-        return url;
-    }
+		return url;
+	}
+
+	/**
+	 * Create a browser-compatible response body for the AWS SDK.
+	 *
+	 * `GetObject` deserialization accepts Blob or ReadableStream, but the
+	 * browser checksum middleware only supports ReadableStream sources.
+	 */
+	private createResponseBody(arrayBuffer: ArrayBuffer): ReadableStream<Uint8Array> | Blob {
+		if (typeof ReadableStream === 'function') {
+			const chunk = new Uint8Array(arrayBuffer);
+			return new ReadableStream<Uint8Array>({
+				start(controller) {
+					if (chunk.byteLength > 0) {
+						controller.enqueue(chunk);
+					}
+					controller.close();
+				},
+			});
+		}
+
+		return new Blob([arrayBuffer]);
+	}
 
     /**
      * Required by AWS SDK - update HTTP client configuration

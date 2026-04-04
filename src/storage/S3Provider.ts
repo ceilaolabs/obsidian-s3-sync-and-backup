@@ -163,15 +163,51 @@ export class S3Provider {
             throw new Error(`Empty response for key: ${key}`);
         }
 
-        // Convert stream to Uint8Array
-        // In browser, Body is a ReadableStream
-        const chunks: Uint8Array[] = [];
-        const reader = (response.Body as ReadableStream<Uint8Array>).getReader();
+        const body = response.Body as
+            | Uint8Array
+            | ArrayBuffer
+            | Blob
+            | ReadableStream<Uint8Array>
+            | { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }
+            | { transformToByteArray?: () => Promise<Uint8Array> }
+            | string;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) chunks.push(value);
+        if (body instanceof Uint8Array) {
+            return body;
+        }
+
+        if (body instanceof ArrayBuffer) {
+            return new Uint8Array(body);
+        }
+
+        if (typeof body === 'string') {
+            return new TextEncoder().encode(body);
+        }
+
+        if (typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray === 'function') {
+            return await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+        }
+
+        if (body instanceof Blob) {
+            return new Uint8Array(await body.arrayBuffer());
+        }
+
+        const chunks: Uint8Array[] = [];
+
+        if (typeof (body as ReadableStream<Uint8Array>).getReader === 'function') {
+            const reader = (body as ReadableStream<Uint8Array>).getReader();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (value) chunks.push(value);
+            }
+        } else if (Symbol.asyncIterator in Object(body)) {
+            for await (const chunk of body as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
+                chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+            }
+        } else {
+            throw new Error(`Unsupported response body type for key: ${key}`);
         }
 
         // Combine chunks into single Uint8Array
@@ -202,26 +238,52 @@ export class S3Provider {
      *
      * @param key - Full S3 key for destination
      * @param content - File content as Uint8Array or string
-     * @param contentType - Optional MIME type
+     * @param options - Optional content type and conditional headers
      * @returns The ETag of the uploaded object (for change tracking)
      */
-    async uploadFile(key: string, content: Uint8Array | string, contentType?: string): Promise<string> {
+	async uploadFile(
+		key: string,
+		content: Uint8Array | string,
+		options?: string | { contentType?: string; ifMatch?: string; ifNoneMatch?: string }
+	): Promise<string> {
         const client = this.getClient();
 
         const body = typeof content === 'string'
             ? new TextEncoder().encode(content)
             : content;
 
+        const contentType = typeof options === 'string' ? options : options?.contentType;
+		const ifMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifMatch);
+		const ifNoneMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifNoneMatch);
+
         const response = await client.send(new PutObjectCommand({
             Bucket: this.settings.bucket,
             Key: key,
             Body: body,
             ContentType: contentType,
+            IfMatch: ifMatch,
+            IfNoneMatch: ifNoneMatch,
         }));
 
-        // Return cleaned ETag (remove quotes)
-        return response.ETag?.replace(/"/g, '') || '';
-    }
+		// Return cleaned ETag (remove quotes)
+		return response.ETag?.replace(/"/g, '') || '';
+	}
+
+	/**
+	 * Convert a normalized ETag into the quoted HTTP entity-tag form required by
+	 * conditional headers such as `If-Match`.
+	 */
+	private toConditionalEntityTag(etag?: string): string | undefined {
+		if (!etag) {
+			return undefined;
+		}
+
+		if (etag === '*' || etag.startsWith('"') || etag.startsWith('W/"')) {
+			return etag;
+		}
+
+		return `"${etag}"`;
+	}
 
     /**
      * Delete a single file from S3
@@ -376,4 +438,8 @@ export class S3Provider {
             this.client = null;
         }
     }
+}
+
+interface AsyncIteratorLike<T> {
+    next(): Promise<IteratorResult<T>>;
 }

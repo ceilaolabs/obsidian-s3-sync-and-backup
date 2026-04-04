@@ -10,6 +10,8 @@ import { S3Provider } from '../storage/S3Provider';
 import { hashContent } from '../crypto/Hasher';
 import { encrypt } from '../crypto/FileEncryptor';
 import { BackupManifest, BackupResult, S3SyncBackupSettings } from '../types';
+import { addPrefix, matchesAnyGlob, normalizePrefix } from '../utils/paths';
+import { readVaultFile } from '../utils/vaultFiles';
 
 /**
  * SnapshotCreator class - Creates backup snapshots
@@ -19,11 +21,13 @@ export class SnapshotCreator {
     private s3Provider: S3Provider;
     private settings: S3SyncBackupSettings;
     private encryptionKey: Uint8Array | null = null;
+    private normalizedBackupPrefix: string;
 
     constructor(app: App, s3Provider: S3Provider, settings: S3SyncBackupSettings) {
         this.app = app;
         this.s3Provider = s3Provider;
         this.settings = settings;
+        this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
     }
 
     /**
@@ -38,6 +42,7 @@ export class SnapshotCreator {
      */
     updateSettings(settings: S3SyncBackupSettings): void {
         this.settings = settings;
+        this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
     }
 
     /**
@@ -124,16 +129,17 @@ export class SnapshotCreator {
         backupName: string,
         checksums: Record<string, string>
     ): Promise<void> {
-        // Read file content
-        const content = await this.app.vault.read(file);
-        const contentBytes = new TextEncoder().encode(content);
+        const content = await readVaultFile(this.app.vault, file);
+        const contentBytes = typeof content === 'string'
+            ? new TextEncoder().encode(content)
+            : content;
 
         // Calculate checksum
         const checksum = await hashContent(contentBytes);
         checksums[file.path] = `sha256:${checksum}`;
 
         // Prepare upload content
-        let uploadContent: Uint8Array | string = content;
+        let uploadContent: Uint8Array | string = typeof content === 'string' ? content : contentBytes;
 
         // Encrypt if enabled
         if (this.settings.encryptionEnabled && this.encryptionKey) {
@@ -141,7 +147,7 @@ export class SnapshotCreator {
         }
 
         // Build S3 key
-        const key = `${this.settings.backupPrefix}/${backupName}/${file.path}`;
+        const key = addPrefix(`${backupName}/${file.path}`, this.normalizedBackupPrefix);
 
         // Upload to S3
         await this.s3Provider.uploadFile(key, uploadContent);
@@ -151,22 +157,15 @@ export class SnapshotCreator {
      * Upload backup manifest
      */
     private async uploadManifest(backupName: string, manifest: BackupManifest): Promise<void> {
-        const key = `${this.settings.backupPrefix}/${backupName}/.backup-manifest.json`;
+        const key = addPrefix(`${backupName}/.backup-manifest.json`, this.normalizedBackupPrefix);
         const content = JSON.stringify(manifest, null, 2);
-        await this.s3Provider.uploadFile(key, content, 'application/json');
+        await this.s3Provider.uploadFile(key, content, { contentType: 'application/json' });
     }
 
     /**
      * Check if path should be excluded from backup
      */
     private shouldExclude(path: string): boolean {
-        return this.settings.excludePatterns.some((pattern) => {
-            const regexPattern = pattern
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '.*')
-                .replace(/\*/g, '[^/]*');
-            const regex = new RegExp(`^${regexPattern}$`);
-            return regex.test(path);
-        });
+        return matchesAnyGlob(path, this.settings.excludePatterns);
     }
 }

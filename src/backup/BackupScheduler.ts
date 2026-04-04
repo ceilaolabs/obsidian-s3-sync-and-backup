@@ -7,6 +7,7 @@
 
 import { Plugin } from 'obsidian';
 import {
+	BackupResult,
     S3SyncBackupSettings,
     BACKUP_INTERVAL_MS,
 } from '../types';
@@ -21,9 +22,9 @@ export class BackupScheduler {
     private isEnabled = false;
     private lastBackupTime: number | null = null;
 
-    // Callbacks
-    private onBackupTrigger?: () => Promise<void>;
-    private onBackupComplete?: (success: boolean) => void;
+	// Callbacks
+	private onBackupTrigger?: () => Promise<BackupResult | null>;
+	private onBackupComplete?: (result: BackupResult | null) => void;
 
     // Storage key for last backup time
     private readonly LAST_BACKUP_KEY = 'obsidian-s3-sync-last-backup';
@@ -36,10 +37,10 @@ export class BackupScheduler {
     /**
      * Set backup trigger callback
      */
-    setCallbacks(callbacks: {
-        onBackupTrigger?: () => Promise<void>;
-        onBackupComplete?: (success: boolean) => void;
-    }): void {
+	setCallbacks(callbacks: {
+		onBackupTrigger?: () => Promise<BackupResult | null>;
+		onBackupComplete?: (result: BackupResult | null) => void;
+	}): void {
         this.onBackupTrigger = callbacks.onBackupTrigger;
         this.onBackupComplete = callbacks.onBackupComplete;
     }
@@ -126,37 +127,44 @@ export class BackupScheduler {
                 console.debug('[S3 Backup] Backup is due, triggering...');
             }
 
-            try {
-                await this.onBackupTrigger?.();
-                this.lastBackupTime = Date.now();
-                await this.saveLastBackupTime();
-                this.onBackupComplete?.(true);
-            } catch (error) {
-                console.error('[S3 Backup] Backup failed:', error);
-                this.onBackupComplete?.(false);
-            }
-        }
-    }
+			try {
+				const result = await this.onBackupTrigger?.() ?? null;
+				if (!result?.success) {
+					throw new Error(result?.errors[0] || 'Backup failed');
+				}
+				this.lastBackupTime = Date.now();
+				await this.saveLastBackupTime();
+				this.onBackupComplete?.(result);
+			} catch (error) {
+				console.error('[S3 Backup] Backup failed:', error);
+				this.onBackupComplete?.(null);
+			}
+		}
+	}
 
     /**
      * Trigger manual backup
      */
-    async triggerManualBackup(): Promise<void> {
+	async triggerManualBackup(): Promise<BackupResult | null> {
         if (this.settings.debugLogging) {
             console.debug('[S3 Backup] Manual backup triggered');
         }
 
-        try {
-            await this.onBackupTrigger?.();
-            this.lastBackupTime = Date.now();
-            await this.saveLastBackupTime();
-            this.onBackupComplete?.(true);
-        } catch (error) {
-            console.error('[S3 Backup] Manual backup failed:', error);
-            this.onBackupComplete?.(false);
-            throw error;
-        }
-    }
+		try {
+			const result = await this.onBackupTrigger?.() ?? null;
+			if (!result?.success) {
+				throw new Error(result?.errors[0] || 'Backup failed');
+			}
+			this.lastBackupTime = Date.now();
+			await this.saveLastBackupTime();
+			this.onBackupComplete?.(result);
+			return result;
+		} catch (error) {
+			console.error('[S3 Backup] Manual backup failed:', error);
+			this.onBackupComplete?.(null);
+			throw error;
+		}
+	}
 
     /**
      * Get last backup time

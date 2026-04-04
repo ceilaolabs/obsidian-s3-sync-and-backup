@@ -7,6 +7,8 @@
 
 import { App, TFile, TAbstractFile } from 'obsidian';
 import { hashContent } from '../crypto/Hasher';
+import { isConflictFile, matchesAnyGlob } from '../utils/paths';
+import { readVaultFile } from '../utils/vaultFiles';
 import { SyncJournal } from './SyncJournal';
 
 /**
@@ -47,6 +49,11 @@ export class ChangeTracker {
      */
     private syncingPaths: Set<string> = new Set();
 
+    /**
+     * Paths changed while sync was actively touching them.
+     */
+    private dirtyWhileSyncing: Set<string> = new Set();
+
     // Event handlers bound to this
     private onCreateHandler: (file: TAbstractFile) => void;
     private onModifyHandler: (file: TAbstractFile) => void;
@@ -73,6 +80,7 @@ export class ChangeTracker {
         if (!inProgress) {
             // Clear syncing paths when sync completes
             this.syncingPaths.clear();
+            void this.flushDirtyPaths();
         }
     }
 
@@ -88,7 +96,7 @@ export class ChangeTracker {
      * Check if a path is currently being synced
      */
     private isPathSyncing(path: string): boolean {
-        return this.syncingPaths.has(path) || this.isSyncInProgress;
+        return this.syncingPaths.has(path);
     }
 
     /**
@@ -139,17 +147,7 @@ export class ChangeTracker {
      * - Patterns are matched against the FULL path
      */
     private shouldExclude(path: string): boolean {
-        return this.excludePatterns.some((pattern) => {
-            // Convert glob pattern to regex
-            const regexPattern = pattern
-                .replace(/\./g, '\\.')  // Escape dots
-                .replace(/\*\*/g, '<<DOUBLESTAR>>')  // Temp placeholder for **
-                .replace(/\*/g, '[^/]*')  // * matches non-separator chars
-                .replace(/<<DOUBLESTAR>>/g, '.*');  // ** matches anything
-
-            const regex = new RegExp(`^${regexPattern}$`);
-            return regex.test(path);
-        });
+        return isConflictFile(path) || matchesAnyGlob(path, this.excludePatterns);
     }
 
     /**
@@ -162,6 +160,7 @@ export class ChangeTracker {
         // Skip journal update if this path is being synced
         // This prevents race conditions during download operations
         if (this.isPathSyncing(file.path)) {
+            this.dirtyWhileSyncing.add(file.path);
             return;
         }
 
@@ -185,6 +184,7 @@ export class ChangeTracker {
         // Skip journal update if this path is being synced
         // This prevents race conditions during upload/download operations
         if (this.isPathSyncing(file.path)) {
+            this.dirtyWhileSyncing.add(file.path);
             return;
         }
 
@@ -208,6 +208,7 @@ export class ChangeTracker {
         // Skip journal update if this path is being synced
         // This prevents race conditions during delete operations
         if (this.isPathSyncing(file.path)) {
+            this.dirtyWhileSyncing.add(file.path);
             return;
         }
 
@@ -229,28 +230,36 @@ export class ChangeTracker {
 
         const excludeOld = this.shouldExclude(oldPath);
         const excludeNew = this.shouldExclude(file.path);
+        const timestamp = Date.now();
 
         // Handle various rename scenarios
         if (!excludeOld && !excludeNew) {
-            // Normal rename - track both old (delete) and new (create)
+            // Normal rename - queue a remote delete for the old path and an
+            // upload for the new path.
+            this.addPendingChange({
+                path: oldPath,
+                type: 'delete',
+                timestamp,
+            });
+
             this.addPendingChange({
                 path: file.path,
                 type: 'rename',
-                timestamp: Date.now(),
+                timestamp,
                 oldPath,
             });
 
-            // Delete old entry from journal
-            await this.journal.deleteEntry(oldPath);
+            // Keep the old entry as a pending deletion so the remote path is removed.
+            await this.journal.markDeleted(oldPath);
 
-            // Add new entry
+            // Record the new path as a pending upload/new file.
             await this.updateJournalForFile(file);
         } else if (!excludeOld && excludeNew) {
             // Moved to excluded location - treat as delete
             this.addPendingChange({
                 path: oldPath,
                 type: 'delete',
-                timestamp: Date.now(),
+                timestamp,
             });
             await this.journal.markDeleted(oldPath);
         } else if (excludeOld && !excludeNew) {
@@ -258,7 +267,7 @@ export class ChangeTracker {
             this.addPendingChange({
                 path: file.path,
                 type: 'create',
-                timestamp: Date.now(),
+                timestamp,
             });
             await this.updateJournalForFile(file);
         }
@@ -303,13 +312,47 @@ export class ChangeTracker {
      */
     private async updateJournalForFile(file: TFile): Promise<void> {
         try {
-            const content = await this.app.vault.read(file);
+            const content = await readVaultFile(this.app.vault, file);
             const hash = await hashContent(content);
             const mtime = file.stat.mtime;
 
             await this.journal.markPending(file.path, hash, mtime);
         } catch (error) {
             console.error(`Failed to update journal for ${file.path}:`, error);
+        }
+    }
+
+    /**
+     * Re-scan paths that changed while sync was actively mutating them.
+     */
+    private async flushDirtyPaths(): Promise<void> {
+        const dirtyPaths = Array.from(this.dirtyWhileSyncing.values());
+        this.dirtyWhileSyncing.clear();
+
+        for (const path of dirtyPaths) {
+            if (this.shouldExclude(path)) {
+                continue;
+            }
+
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                this.addPendingChange({
+                    path,
+                    type: 'modify',
+                    timestamp: Date.now(),
+                });
+                await this.updateJournalForFile(file);
+                continue;
+            }
+
+            if (await this.journal.hasEntry(path)) {
+                this.addPendingChange({
+                    path,
+                    type: 'delete',
+                    timestamp: Date.now(),
+                });
+                await this.journal.markDeleted(path);
+            }
         }
     }
 

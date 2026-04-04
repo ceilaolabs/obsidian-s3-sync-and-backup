@@ -7,6 +7,24 @@
 
 import { ChangeTracker, PendingChange } from '../../src/sync/ChangeTracker';
 import { SyncJournal } from '../../src/sync/SyncJournal';
+import { TFile } from 'obsidian';
+
+class MockTFile extends TFile {
+    constructor(path: string, mtime = Date.now()) {
+        super();
+        this.path = path;
+        this.name = path.split('/').pop() || path;
+
+        const dotIndex = this.name.lastIndexOf('.');
+        this.basename = dotIndex > -1 ? this.name.slice(0, dotIndex) : this.name;
+        this.extension = dotIndex > -1 ? this.name.slice(dotIndex + 1) : '';
+        this.stat = {
+            ctime: mtime,
+            mtime,
+            size: 0,
+        };
+    }
+}
 
 /**
  * Create mock App (Obsidian)
@@ -259,6 +277,25 @@ describe('ChangeTracker', () => {
 
             // Should only register once
             expect(mockApp.vault.on).toHaveBeenCalledTimes(4); // 4 events
+        });
+    });
+
+    describe('rename handling', () => {
+        it('should keep the old path queued for remote deletion', async () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+            const file = new MockTFile('renamed.md', 123);
+
+            const onFileRename = (tracker as unknown as {
+                onFileRename: (file: TFile, oldPath: string) => Promise<void>;
+            }).onFileRename.bind(tracker);
+
+            await onFileRename(file, 'original.md');
+
+            expect(mockJournal.markDeleted).toHaveBeenCalledWith('original.md');
+            expect(mockJournal.deleteEntry).not.toHaveBeenCalled();
+            expect(mockJournal.markPending).toHaveBeenCalledWith('renamed.md', expect.any(String), 123);
         });
     });
 });

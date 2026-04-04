@@ -215,26 +215,31 @@ export class SyncJournal {
     /**
      * Mark a file as pending (local changes)
      *
-     * Preserves remote state (remoteHash, remoteEtag) from existing entry
-     * so we can still detect remote changes during sync.
+     * Preserves the last synced snapshot from any existing entry so sync can
+     * compare the current local file against the previous baseline.
+     *
+     * New files are stored with status `new` and an empty baseline. This lets
+     * the sync engine treat them as first-time uploads instead of comparing
+     * them against a fake synced state.
      *
      * @param path - File path
-     * @param localHash - New local hash
+     * @param _localHash - New local hash (used by callers for change detection)
      * @param localMtime - New local modification time
      */
-    async markPending(path: string, localHash: string, localMtime: number): Promise<void> {
+    async markPending(path: string, _localHash: string, localMtime: number): Promise<void> {
         const existing = await this.getEntry(path);
+        const hasSyncedBaseline = existing !== undefined && existing.syncedAt > 0;
 
         const entry: SyncJournalEntry = {
             path,
-            localHash,
-            remoteHash: existing?.remoteHash || '',
-            remoteEtag: existing?.remoteEtag, // Preserve ETag for remote change detection
+            localHash: hasSyncedBaseline ? existing.localHash : '',
+            remoteHash: hasSyncedBaseline ? existing.remoteHash : '',
+            remoteEtag: hasSyncedBaseline ? existing.remoteEtag : undefined,
             localMtime,
-            remoteMtime: existing?.remoteMtime || 0,
-            syncedAt: existing?.syncedAt || 0,
-            status: 'pending',
-            lastModifiedBy: existing?.lastModifiedBy, // Preserve device info
+            remoteMtime: hasSyncedBaseline ? existing.remoteMtime : 0,
+            syncedAt: hasSyncedBaseline ? existing.syncedAt : 0,
+            status: hasSyncedBaseline ? 'pending' : 'new',
+            lastModifiedBy: hasSyncedBaseline ? existing.lastModifiedBy : undefined,
         };
         await this.setEntry(entry);
     }

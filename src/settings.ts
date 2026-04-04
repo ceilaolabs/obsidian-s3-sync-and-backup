@@ -20,6 +20,7 @@ import {
 	RetentionMode,
 } from './types';
 import { S3Provider } from './storage/S3Provider';
+import { normalizePrefix } from './utils/paths';
 
 /**
  * Sync interval display names for dropdown
@@ -315,7 +316,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					text.setPlaceholder('vault');
 					text.setValue(this.plugin.settings.syncPrefix);
 					text.onChange(async (value) => {
-						this.plugin.settings.syncPrefix = value || 'vault';
+						this.plugin.settings.syncPrefix = normalizePrefix(value) || 'vault';
 						await this.plugin.saveSettings();
 					});
 				});
@@ -394,7 +395,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					text.setPlaceholder('backups');
 					text.setValue(this.plugin.settings.backupPrefix);
 					text.onChange(async (value) => {
-						this.plugin.settings.backupPrefix = value || 'backups';
+						this.plugin.settings.backupPrefix = normalizePrefix(value) || 'backups';
 						await this.plugin.saveSettings();
 					});
 				});
@@ -482,8 +483,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				.addButton((button) => {
 					button.setButtonText('Backup now');
 					button.onClick(async () => {
-						// Will be connected to backup engine
-						new Notice('Backup triggered (not yet implemented)');
+						await this.plugin.triggerManualBackup();
 					});
 				});
 		}
