@@ -74,6 +74,12 @@ interface ExtendedSyncPlanItem extends SyncPlanItem {
 
 /**
  * Successful action outcome queued until manifest commit and journal updates.
+ *
+ * Outcomes carry the intended manifest mutations (manifestEntry / tombstone)
+ * and enough context to perform content-hash-based rebase when a concurrent
+ * manifest write is detected (412/409).  The old `verifyRemoteState` callback
+ * was ETag-based and produced false conflicts when two devices uploaded
+ * identical content.
  */
 interface SyncExecutionOutcome {
     path: string;
@@ -83,7 +89,8 @@ interface SyncExecutionOutcome {
     manifestEntry?: RemoteSyncFileEntry | null;
     tombstone?: RemoteSyncTombstone | null;
     applyJournal: () => Promise<void>;
-    verifyRemoteState: () => Promise<boolean>;
+    /** Best-effort cleanup to run after manifest commit succeeds (e.g. physical S3 object deletion). */
+    postCommitCleanup?: () => Promise<void>;
 }
 
 /**
@@ -202,6 +209,10 @@ export class SyncEngine {
                 await outcome.applyJournal();
                 for (const path of outcome.clearPendingPaths) {
                     this.changeTracker.clearPendingChange(path);
+                }
+
+                if (outcome.postCommitCleanup) {
+                    await outcome.postCommitCleanup();
                 }
             }
 
@@ -457,7 +468,6 @@ export class SyncEngine {
                     clearPendingPaths: [],
                     requiresManifestCommit: false,
                     applyJournal: async () => undefined,
-                    verifyRemoteState: async () => true,
                 };
         }
     }
@@ -503,14 +513,6 @@ export class SyncEngine {
                     remoteEtag,
                     remoteLastModifiedBy === 'unknown' ? undefined : remoteLastModifiedBy
                 );
-            },
-            verifyRemoteState: async () => {
-                if (!requiresManifestCommit) {
-                    return true;
-                }
-
-                const metadata = await this.s3Provider.getFileMetadata(this.localPathToS3Key(item.path));
-                return metadata !== null && (!manifestEntry?.etag || !metadata.etag || metadata.etag === manifestEntry.etag);
             },
         };
     }
@@ -564,10 +566,6 @@ export class SyncEngine {
                     this.deviceId
                 );
             },
-            verifyRemoteState: async () => {
-                const metadata = await this.s3Provider.getFileMetadata(this.localPathToS3Key(item.path));
-                return metadata?.etag === etag;
-            },
         };
     }
 
@@ -619,14 +617,6 @@ export class SyncEngine {
                     remoteLastModifiedBy === 'unknown' ? undefined : remoteLastModifiedBy
                 );
             },
-            verifyRemoteState: async () => {
-                if (!requiresManifestCommit) {
-                    return true;
-                }
-
-                const metadata = await this.s3Provider.getFileMetadata(this.localPathToS3Key(item.path));
-                return metadata !== null && (!manifestEntry?.etag || !metadata.etag || metadata.etag === manifestEntry.etag);
-            },
         };
     }
 
@@ -647,25 +637,18 @@ export class SyncEngine {
             applyJournal: async () => {
                 await this.journal.deleteEntry(item.path);
             },
-            verifyRemoteState: async () => true,
         };
     }
 
     /**
-     * Delete a remote file and replace it with a tombstone.
+     * Delete a remote file by tombstoning it in the manifest.
+     *
+     * Physical S3 object deletion is deferred to postCommitCleanup so the
+     * tombstone is committed first, preventing delete/write races where
+     * another device could re-upload before the manifest records the delete.
      */
     private async deleteRemotePath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
         const key = this.localPathToS3Key(item.path);
-        if (item.state.remoteExists) {
-            if (item.expectedRemoteEtag) {
-                const currentEtag = await this.s3Provider.getFileEtag(key);
-                if (currentEtag !== null && currentEtag !== item.expectedRemoteEtag) {
-                    throw new Error(`Remote file ${item.path} changed while syncing.`);
-                }
-            }
-
-            await this.s3Provider.deleteFile(key);
-        }
 
         return {
             path: item.path,
@@ -682,7 +665,15 @@ export class SyncEngine {
             applyJournal: async () => {
                 await this.journal.deleteEntry(item.path);
             },
-            verifyRemoteState: async () => !(await this.s3Provider.fileExists(key)),
+            postCommitCleanup: async () => {
+                try {
+                    if (item.state.remoteExists) {
+                        await this.s3Provider.deleteFile(key);
+                    }
+                } catch (error) {
+                    this.log(`Best-effort S3 object deletion failed for ${item.path}: ${String(error)}`);
+                }
+            },
         };
     }
 
@@ -718,7 +709,6 @@ export class SyncEngine {
                     item.state.remoteObject?.etag ?? item.state.manifestEntry?.etag
                 );
             },
-            verifyRemoteState: async () => true,
         };
     }
 
@@ -733,7 +723,9 @@ export class SyncEngine {
         const committedPaths = new Set<string>();
         let currentManifest = loadedManifest;
         let applicableOutcomes = outcomes.filter((outcome) => outcome.requiresManifestCommit);
-        const maxCommitAttempts = 5;
+        const maxCommitAttempts = 10;
+        const syncStartTime = Date.now();
+        const maxSyncAgeMs = 30_000;
 
         if (applicableOutcomes.length === 0 && loadedManifest.existed) {
             await this.touchRemoteDevice(loadedManifest.manifest.generation);
@@ -743,7 +735,9 @@ export class SyncEngine {
         for (let attempt = 0; attempt < maxCommitAttempts; attempt++) {
             try {
                 if (attempt > 0) {
-                    applicableOutcomes = await this.filterApplicableManifestOutcomes(applicableOutcomes, errors);
+                    applicableOutcomes = this.rebasePendingOutcomes(
+                        applicableOutcomes, currentManifest.manifest
+                    );
                     if (applicableOutcomes.length === 0 && currentManifest.existed) {
                         await this.touchRemoteDevice(currentManifest.manifest.generation);
                         return committedPaths;
@@ -766,9 +760,17 @@ export class SyncEngine {
             } catch (error) {
                 if (error instanceof RemoteSyncManifestChangedError && attempt < maxCommitAttempts - 1) {
                     currentManifest = await this.remoteStore.loadManifest();
-                    const retryDelayMs = 50 * (attempt + 1);
-                    this.log(`Manifest changed during commit; retrying in ${retryDelayMs}ms`);
-                    await sleep(retryDelayMs);
+
+                    if (Date.now() - syncStartTime > maxSyncAgeMs) {
+                        this.log('Manifest commit exceeded 30s; aborting redrive — next sync will re-plan');
+                        errors.push(this.createSyncError('', 'skip', error, true));
+                        return committedPaths;
+                    }
+
+                    const baseDelayMs = Math.min(100 * Math.pow(2, attempt), 2000);
+                    const jitteredDelayMs = Math.round(baseDelayMs * Math.random());
+                    this.log(`Manifest changed during commit (attempt ${attempt + 1}/${maxCommitAttempts}); retrying in ${jitteredDelayMs}ms`);
+                    await sleep(jitteredDelayMs);
                     continue;
                 }
 
@@ -781,26 +783,73 @@ export class SyncEngine {
     }
 
     /**
-     * Re-check outcomes after a concurrent manifest update.
+     * Rebase pending outcomes against a freshly-loaded manifest after a 412/409.
+     *
+     * Uses content-hash semantics instead of ETag matching:
+     * - Same contentHash in fresh manifest → already applied by another device, skip
+     * - Different contentHash in fresh manifest → stale, silently skip (next sync reconciles)
+     * - File not in fresh manifest and we're adding → still pending
+     * - Tombstone already in fresh manifest → already applied, skip
+     * - File re-added by another device where we wanted to delete → stale, silently skip
      */
-    private async filterApplicableManifestOutcomes(
+    private rebasePendingOutcomes(
         outcomes: SyncExecutionOutcome[],
-        errors: SyncError[]
-    ): Promise<SyncExecutionOutcome[]> {
+        freshManifest: RemoteSyncManifest
+    ): SyncExecutionOutcome[] {
         const applicable: SyncExecutionOutcome[] = [];
 
         for (const outcome of outcomes) {
-            if (await outcome.verifyRemoteState()) {
+            const freshEntry = freshManifest.files[outcome.path];
+            const freshTombstone = freshManifest.tombstones[outcome.path];
+
+            if (outcome.manifestEntry === null) {
+                // We wanted to remove this file from the manifest (delete-remote).
+                if (!freshEntry && freshTombstone) {
+                    // Another device already tombstoned it — converged.
+                    this.log(`Rebase: ${outcome.path} already tombstoned by another device, skipping`);
+                    continue;
+                }
+                if (freshEntry) {
+                    // Another device re-added or modified the file — stale, next sync resolves.
+                    this.log(`Rebase: ${outcome.path} was modified by another device during sync; skipping delete — next sync will reconcile`);
+                    continue;
+                }
+                // File not in manifest at all (no entry, no tombstone) — unusual but still apply.
                 applicable.push(outcome);
                 continue;
             }
 
-            errors.push({
-                path: outcome.path,
-                action: outcome.action,
-                message: `Remote state for ${outcome.path} changed before manifest commit.`,
-                recoverable: true,
-            });
+            if (outcome.manifestEntry) {
+                // We wanted to add/update this file in the manifest.
+                if (freshEntry && freshEntry.contentHash === outcome.manifestEntry.contentHash) {
+                    // Same content already committed by another device — converged.
+                    this.log(`Rebase: ${outcome.path} already committed with same content hash, skipping`);
+                    continue;
+                }
+                if (freshEntry && freshEntry.contentHash !== outcome.manifestEntry.contentHash) {
+                    // Different content committed by another device — stale, next sync will download or conflict.
+                    this.log(`Rebase: ${outcome.path} was modified with different content by another device; skipping — next sync will reconcile`);
+                    continue;
+                }
+                // No entry in fresh manifest for this path — still pending.
+                applicable.push(outcome);
+                continue;
+            }
+
+            // outcome.manifestEntry is undefined — no manifest mutation intended.
+            // Tombstone-only outcomes or non-manifest outcomes pass through.
+            if (outcome.tombstone === null && freshTombstone) {
+                // We wanted to clear a tombstone that's still present — still applicable.
+                applicable.push(outcome);
+            } else if (outcome.tombstone) {
+                if (freshTombstone) {
+                    this.log(`Rebase: ${outcome.path} tombstone already present, skipping`);
+                    continue;
+                }
+                applicable.push(outcome);
+            } else {
+                applicable.push(outcome);
+            }
         }
 
         return applicable;
