@@ -88,6 +88,87 @@ describe('BackupScheduler', () => {
 		jest.restoreAllMocks();
 	});
 
+	it('stops the scheduler and clears the interval', async () => {
+		const plugin = new MockPlugin({
+			'obsidian-s3-sync-last-backup': Date.now(),
+		});
+		const scheduler = new BackupScheduler(plugin as never, createSettings());
+		const clearIntervalSpy = jest.spyOn(window, 'clearInterval');
+
+		await scheduler.start();
+		scheduler.stop();
+
+		expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+		expect(scheduler.getNextBackupTime()).toBeNull();
+	});
+
+	it('returns the next backup time when enabled and last backup exists', async () => {
+		const lastBackupTime = Date.now();
+		const plugin = new MockPlugin({
+			'obsidian-s3-sync-last-backup': lastBackupTime,
+		});
+		const scheduler = new BackupScheduler(plugin as never, createSettings({ backupInterval: '1hour' }));
+
+		await scheduler.start();
+
+		expect(scheduler.getNextBackupTime()).toEqual(new Date(lastBackupTime + 60 * 60 * 1000));
+		scheduler.stop();
+	});
+
+	it('returns null when the scheduler is not enabled', () => {
+		const plugin = new MockPlugin();
+		const scheduler = new BackupScheduler(plugin as never, createSettings());
+
+		expect(scheduler.getNextBackupTime()).toBeNull();
+	});
+
+	it('restarts when settings are updated while enabled', async () => {
+		const plugin = new MockPlugin({
+			'obsidian-s3-sync-last-backup': Date.now(),
+		});
+		const scheduler = new BackupScheduler(plugin as never, createSettings({ backupInterval: '1hour' }));
+		const registerIntervalSpy = jest.spyOn(plugin, 'registerInterval');
+		const clearIntervalSpy = jest.spyOn(window, 'clearInterval');
+
+		await scheduler.start();
+		scheduler.updateSettings(createSettings({ backupInterval: '6hours' }));
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+		expect(registerIntervalSpy).toHaveBeenCalledTimes(2);
+		scheduler.stop();
+	});
+
+	it('does not schedule backups when disabled', async () => {
+		const plugin = new MockPlugin();
+		const scheduler = new BackupScheduler(plugin as never, createSettings({ backupEnabled: false }));
+		const registerIntervalSpy = jest.spyOn(plugin, 'registerInterval');
+		const loadDataSpy = jest.spyOn(plugin, 'loadData');
+
+		await scheduler.start();
+
+		expect(loadDataSpy).not.toHaveBeenCalled();
+		expect(registerIntervalSpy).not.toHaveBeenCalled();
+	});
+
+	it('only starts once when start is called repeatedly', async () => {
+		const plugin = new MockPlugin({
+			'obsidian-s3-sync-last-backup': Date.now(),
+		});
+		const scheduler = new BackupScheduler(plugin as never, createSettings());
+		const registerIntervalSpy = jest.spyOn(plugin, 'registerInterval');
+
+		await scheduler.start();
+		await scheduler.start();
+
+		expect(registerIntervalSpy).toHaveBeenCalledTimes(1);
+		scheduler.stop();
+	});
+
 	it('persists last backup time after a successful manual backup', async () => {
 		const plugin = new MockPlugin();
 		const scheduler = new BackupScheduler(plugin as never, createSettings());

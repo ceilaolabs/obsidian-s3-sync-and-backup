@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { SyncEngine } from '../../src/sync/SyncEngine';
 import { ChangeTracker } from '../../src/sync/ChangeTracker';
 import { SyncJournal } from '../../src/sync/SyncJournal';
@@ -9,6 +9,20 @@ import {
 	S3SyncBackupSettings,
 	SyncAction,
 } from '../../src/types';
+import {
+	LoadedRemoteSyncManifest,
+	RemoteSyncManifestChangedError,
+} from '../../src/sync/RemoteSyncStore';
+
+jest.mock('../../src/crypto/Hasher', () => ({
+	hashContent: jest.fn().mockResolvedValue('mock-hash'),
+}));
+
+jest.mock('../../src/utils/vaultFiles', () => ({
+	readVaultFile: jest.fn().mockResolvedValue('mock-content'),
+	getVaultFileKind: jest.fn().mockReturnValue('text'),
+	toArrayBuffer: jest.fn().mockReturnValue(new ArrayBuffer(0)),
+}));
 
 type TestSyncExecutionOutcome = {
 	path: string;
@@ -144,7 +158,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([outcome]);
 	});
 
 	it('silently skips a stale upload outcome when the fresh manifest has a different content hash', () => {
@@ -159,7 +174,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('keeps an upload outcome pending when the path is not present in the fresh manifest', () => {
@@ -169,7 +185,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], makeManifest());
 
-		expect(rebased).toEqual([outcome]);
+		expect(rebased.pending).toEqual([outcome]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('skips a delete outcome when the fresh manifest is already tombstoned', () => {
@@ -186,7 +203,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([outcome]);
 	});
 
 	it('silently skips a delete outcome when the file was re-added by another device', () => {
@@ -203,7 +221,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('keeps a delete outcome pending when the path is absent from both files and tombstones', () => {
@@ -215,7 +234,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], makeManifest());
 
-		expect(rebased).toEqual([outcome]);
+		expect(rebased.pending).toEqual([outcome]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('rebases mixed outcomes by dropping converged and stale work while keeping pending work', () => {
@@ -243,7 +263,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([converged, stale, pending], freshManifest);
 
-		expect(rebased).toEqual([pending]);
+		expect(rebased.pending).toEqual([pending]);
+		expect(rebased.converged).toEqual([converged]);
 	});
 
 	it('skips a tombstone-only outcome when the tombstone is already present', () => {
@@ -259,7 +280,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([outcome]);
 	});
 
 	it('keeps a tombstone-clearing outcome applicable when the fresh manifest still has the tombstone', () => {
@@ -275,7 +297,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([outcome]);
+		expect(rebased.pending).toEqual([outcome]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('passes through an outcome with no manifest or tombstone mutation', () => {
@@ -286,7 +309,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], makeManifest());
 
-		expect(rebased).toEqual([outcome]);
+		expect(rebased.pending).toEqual([outcome]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('keeps a tombstone-only outcome applicable when the fresh manifest does not have the tombstone yet', () => {
@@ -297,7 +321,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], makeManifest());
 
-		expect(rebased).toEqual([outcome]);
+		expect(rebased.pending).toEqual([outcome]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('silently skips a delete outcome when the fresh manifest has both a file entry and a tombstone', () => {
@@ -317,7 +342,8 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([]);
 	});
 
 	it('uses content hashes instead of etags when deciding whether an upload already converged', () => {
@@ -332,6 +358,165 @@ describe('SyncEngine rebasePendingOutcomes', () => {
 
 		const rebased = (engine as any).rebasePendingOutcomes([outcome], freshManifest);
 
-		expect(rebased).toEqual([]);
+		expect(rebased.pending).toEqual([]);
+		expect(rebased.converged).toEqual([outcome]);
+	});
+});
+
+describe('SyncEngine commitManifestChanges', () => {
+	let engine: SyncEngine;
+
+	beforeEach(() => {
+		jest.clearAllMocks();
+		engine = createEngine();
+	});
+
+	/**
+	 * Regression test for bugs M1/M2.
+	 *
+	 * When saveManifest fails with RemoteSyncManifestChangedError on the first
+	 * attempt, the engine must reload the manifest and rebase outstanding
+	 * outcomes.  Outcomes whose content hash already matches the freshly-loaded
+	 * manifest (i.e. another device committed the same change) must be returned
+	 * in `convergedOutcomes` so the caller can still apply their journal entries.
+	 * Outcomes not yet present in the fresh manifest must be committed and
+	 * returned in `committedPaths`.
+	 */
+	it('returns converged outcomes separately from committed paths (M1/M2 fix)', async () => {
+		// Arrange ----------------------------------------------------------------
+
+		const sameOutcome = makeOutcome({
+			path: 'same.md',
+			action: 'upload',
+			clearPendingPaths: ['same.md'],
+			requiresManifestCommit: true,
+			manifestEntry: makeFileEntry({ path: 'same.md', contentHash: 'hash-a' }),
+		});
+
+		const newOutcome = makeOutcome({
+			path: 'new.md',
+			action: 'upload',
+			clearPendingPaths: ['new.md'],
+			requiresManifestCommit: true,
+			manifestEntry: makeFileEntry({ path: 'new.md', contentHash: 'hash-b' }),
+		});
+
+		// The first saveManifest call races with another device and fails.
+		// The second call (after rebase) succeeds.
+		const mockSaveManifest = jest.fn()
+			.mockRejectedValueOnce(new RemoteSyncManifestChangedError())
+			.mockResolvedValue('etag-new');
+
+		// The fresh manifest that is loaded after the first failure already
+		// contains same.md with the matching content hash — i.e. another device
+		// committed the identical change.
+		const freshManifest: RemoteSyncManifest = makeManifest({
+			files: {
+				'same.md': makeFileEntry({ path: 'same.md', contentHash: 'hash-a' }),
+			},
+		});
+
+		const mockLoadManifest = jest.fn().mockResolvedValue({
+			manifest: freshManifest,
+			etag: 'etag-fresh',
+			existed: true,
+		} as LoadedRemoteSyncManifest);
+
+		// Wire the mocks onto the engine's private remoteStore
+		(engine as any).remoteStore.saveManifest = mockSaveManifest;
+		(engine as any).remoteStore.loadManifest = mockLoadManifest;
+		// touchRemoteDevice delegates to remoteStore.touchDevice
+		(engine as any).remoteStore.touchDevice = jest.fn().mockResolvedValue(undefined);
+
+		// The initial loaded manifest (before the first save attempt)
+		const initialLoadedManifest: LoadedRemoteSyncManifest = {
+			manifest: makeManifest(),
+			etag: 'etag-old',
+			existed: true,
+		};
+
+		const errors: never[] = [];
+
+		// Act --------------------------------------------------------------------
+		const result = await (engine as any).commitManifestChanges(
+			initialLoadedManifest,
+			[sameOutcome, newOutcome],
+			errors,
+		);
+
+		// Assert -----------------------------------------------------------------
+
+		// new.md was pending after rebase and successfully committed
+		expect(result.committedPaths.has('new.md')).toBe(true);
+
+		// same.md converged with the remote device and must NOT appear in
+		// committedPaths (it was never re-saved)
+		expect(result.committedPaths.has('same.md')).toBe(false);
+
+		// same.md must be returned in convergedOutcomes so the caller can
+		// apply its journal entry
+		expect(result.convergedOutcomes).toContain(sameOutcome);
+
+		// new.md was committed, not converged
+		expect(result.convergedOutcomes).not.toContain(newOutcome);
+	});
+});
+
+describe('SyncEngine buildFileStateMap', () => {
+	let engine: SyncEngine;
+
+	beforeEach(() => {
+		jest.clearAllMocks();
+		engine = createEngine();
+	});
+
+	/**
+	 * Regression test for bug E4.
+	 *
+	 * buildFileStateMap must call changeTracker.markPathSyncing for every local
+	 * file path in one synchronous pass BEFORE any await.  This prevents vault
+	 * events emitted during the async state-build phase from racing with the
+	 * path locks and causing stale change entries to survive the sync cycle.
+	 */
+	it('pre-locks all local file paths via markPathSyncing (E4 fix)', async () => {
+		// Arrange ----------------------------------------------------------------
+
+		// Build a small set of mock local files
+		const mockFileA = { path: 'a.md', stat: { mtime: Date.now(), size: 10 } } as TFile;
+		const mockFileB = { path: 'b.md', stat: { mtime: Date.now(), size: 20 } } as TFile;
+		const mockFileC = { path: 'notes/c.md', stat: { mtime: Date.now(), size: 30 } } as TFile;
+
+		// Override vault.getFiles to return our mock files
+		(engine as any).app.vault.getFiles = jest.fn().mockReturnValue([
+			mockFileA,
+			mockFileB,
+			mockFileC,
+		]);
+
+		// Spy on changeTracker.markPathSyncing
+		const markPathSyncing = jest.fn();
+		(engine as any).changeTracker.markPathSyncing = markPathSyncing;
+
+		// Stub the remaining dependencies consumed inside buildFileStateMap
+
+		// s3Provider.listObjects — no remote objects so we avoid the remote loop
+		(engine as any).s3Provider.listObjects = jest.fn().mockResolvedValue([]);
+
+		// journal.getAllEntries — no journal entries
+		(engine as any).journal.getAllEntries = jest.fn().mockResolvedValue([]);
+
+		// remoteStore.isMetadataKey — none of the (empty) keys are metadata
+		(engine as any).remoteStore.isMetadataKey = jest.fn().mockReturnValue(false);
+
+		// Act --------------------------------------------------------------------
+		await (engine as any).buildFileStateMap(makeManifest());
+
+		// Assert -----------------------------------------------------------------
+
+		// markPathSyncing must have been called once for every local file path
+		expect(markPathSyncing).toHaveBeenCalledWith('a.md');
+		expect(markPathSyncing).toHaveBeenCalledWith('b.md');
+		expect(markPathSyncing).toHaveBeenCalledWith('notes/c.md');
+		expect(markPathSyncing).toHaveBeenCalledTimes(3);
 	});
 });
