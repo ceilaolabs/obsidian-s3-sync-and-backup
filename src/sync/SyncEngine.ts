@@ -121,12 +121,11 @@ export class SyncEngine {
         private s3Provider: S3Provider,
         private journal: SyncJournal,
         private changeTracker: ChangeTracker,
-        private settings: S3SyncBackupSettings
+        private settings: S3SyncBackupSettings,
+        deviceId: string
     ) {
         this.debugLogging = settings.debugLogging;
-        this.deviceId = this.getOrCreateStoredString('s3-sync-device-id', () => (
-            `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-        ));
+        this.deviceId = deviceId;
         this.deviceCreatedAt = Number(this.getOrCreateStoredString('s3-sync-device-created-at', () => String(Date.now())));
         this.normalizedSyncPrefix = normalizePrefix(settings.syncPrefix);
         this.remoteStore = new RemoteSyncStore(this.s3Provider, this.normalizedSyncPrefix);
@@ -924,7 +923,7 @@ export class SyncEngine {
         const navigatorAgent = globalThis.navigator?.userAgent || 'Unknown platform';
         const deviceInfo: RemoteSyncDeviceInfo = {
             deviceId: this.deviceId,
-            deviceName: navigatorAgent.split(' ')[0] || 'Obsidian',
+            deviceName: this.app.vault.getName(),
             platform: navigatorAgent,
             lastSeenAt: Date.now(),
             createdAt: this.deviceCreatedAt,

@@ -77,8 +77,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Load settings
 		await this.loadSettings();
 
-		// Get device ID
-		this.deviceId = getOrCreateDeviceId();
+		this.deviceId = getOrCreateDeviceId(this.app);
 
 		// Initialize S3 provider
 		this.s3Provider = new S3Provider(this.settings);
@@ -109,7 +108,8 @@ export default class S3SyncBackupPlugin extends Plugin {
 			this.s3Provider,
 			this.syncJournal,
 			this.changeTracker,
-			this.settings
+			this.settings,
+			this.deviceId
 		);
 
 		// Initialize sync scheduler

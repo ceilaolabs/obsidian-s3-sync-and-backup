@@ -6,6 +6,7 @@
  * sync with wrong passphrase.
  */
 
+import { App } from 'obsidian';
 import { S3Provider } from '../storage/S3Provider';
 import { VaultEncryptionMarker } from '../types';
 import { deriveKey, bytesToBase64, base64ToBytes, generateSalt } from './KeyDerivation';
@@ -148,7 +149,28 @@ export class VaultMarker {
 }
 
 /**
- * Generate a unique device ID
+ * Vault-scoped local storage key for the device ID.
+ *
+ * This is the single canonical key used by both the sync engine and
+ * backup/encryption subsystems.  Obsidian's {@link App.loadLocalStorage}
+ * and {@link App.saveLocalStorage} automatically namespace the key
+ * per-vault, so two vaults on the same device receive independent IDs.
+ */
+const DEVICE_ID_STORAGE_KEY = 's3-sync-device-id';
+
+/**
+ * Legacy global localStorage key used by versions prior to the
+ * vault-scoped migration.  Checked once during migration so existing
+ * users keep the same device ID in their first vault after the upgrade.
+ */
+const LEGACY_GLOBAL_STORAGE_KEY = 'obsidian-s3-sync-device-id';
+
+/**
+ * Generate a unique device ID using cryptographically random bytes.
+ *
+ * Format: `device-<16 hex chars>` (8 random bytes).
+ *
+ * @returns A new device ID string
  */
 export function generateDeviceId(): string {
     const random = new Uint8Array(8);
@@ -160,22 +182,43 @@ export function generateDeviceId(): string {
 }
 
 /**
- * Get or create device ID
- * Uses a simple random ID - note: localStorage is used here as this is
- * for device identification, not vault-specific data
+ * Get or create a vault-scoped device ID.
+ *
+ * Uses Obsidian's vault-scoped storage ({@link App.loadLocalStorage} /
+ * {@link App.saveLocalStorage}) so each vault on the same machine gets
+ * its own device ID.  This prevents cross-vault contamination when a
+ * single user runs multiple vaults.
+ *
+ * **Migration**: On first call after upgrade, if vault-scoped storage is
+ * empty the function checks the legacy global `window.localStorage` key
+ * (`obsidian-s3-sync-device-id`) and adopts that value for this vault.
+ * The global key is intentionally left intact so other vaults (not yet
+ * upgraded) can also migrate independently.
+ *
+ * @param app - The Obsidian {@link App} instance (provides vault-scoped storage)
+ * @returns The device ID for this vault
  */
-export function getOrCreateDeviceId(): string {
-    const STORAGE_KEY = 'obsidian-s3-sync-device-id';
-
-    // Try to get existing device ID from window localStorage
-    // Note: Using window.localStorage directly as this is device-specific, not vault-specific
-    let deviceId = window.localStorage.getItem(STORAGE_KEY);
-
-    if (!deviceId) {
-        // Generate new device ID
-        deviceId = generateDeviceId();
-        window.localStorage.setItem(STORAGE_KEY, deviceId);
+export function getOrCreateDeviceId(app: App): string {
+    // 1. Try vault-scoped storage first
+    const existing = app.loadLocalStorage(DEVICE_ID_STORAGE_KEY) as string | null;
+    if (existing) {
+        return existing;
     }
 
+    // 2. Migrate from legacy global localStorage if available
+    let deviceId: string | null = null;
+    try {
+        deviceId = window.localStorage.getItem(LEGACY_GLOBAL_STORAGE_KEY);
+    } catch {
+        // window.localStorage may not be available in all environments
+    }
+
+    // 3. Generate a fresh ID if no legacy value exists
+    if (!deviceId) {
+        deviceId = generateDeviceId();
+    }
+
+    // 4. Persist into vault-scoped storage
+    app.saveLocalStorage(DEVICE_ID_STORAGE_KEY, deviceId);
     return deviceId;
 }
