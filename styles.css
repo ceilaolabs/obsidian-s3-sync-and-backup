@@ -1,8 +1,56 @@
-/*
+.s3-sync-backup-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.s3-sync-backup-segment {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.1rem 0.45rem;
+	border-radius: 999px;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
 
-If your plugin does not need CSS, delete this file.
+.s3-sync-backup-segment:hover,
+.s3-sync-backup-segment:focus-visible {
+	background-color: var(--background-modifier-hover);
+	outline: none;
+}
 
-*/
+.s3-sync-backup-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1rem;
+	height: 1rem;
+}
+
+.s3-sync-backup-text {
+	font-size: var(--font-ui-small);
+	white-space: nowrap;
+}
+
+.s3-sync-backup-segment.is-syncing,
+.s3-sync-backup-segment.is-running {
+	color: var(--text-accent);
+}
+
+.s3-sync-backup-segment.is-synced,
+.s3-sync-backup-segment.is-completed,
+.s3-sync-backup-segment.is-idle {
+	color: var(--text-normal);
+}
+
+.s3-sync-backup-segment.is-conflicts,
+.s3-sync-backup-segment.is-error {
+	color: var(--text-error);
+}
+
+.s3-sync-backup-segment.is-disabled,
+.s3-sync-backup-segment.is-paused {
+	color: var(--text-muted);
+	opacity: 0.85;
+}

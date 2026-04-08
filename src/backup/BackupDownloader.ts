@@ -7,6 +7,8 @@
 import { S3Provider } from '../storage/S3Provider';
 import { decrypt } from '../crypto/FileEncryptor';
 import { S3SyncBackupSettings, BackupManifest } from '../types';
+import { addPrefix, normalizePrefix, removePrefix } from '../utils/paths';
+import JSZip from 'jszip';
 
 /**
  * BackupDownloader class - Downloads and packages backups
@@ -15,10 +17,12 @@ export class BackupDownloader {
     private s3Provider: S3Provider;
     private settings: S3SyncBackupSettings;
     private encryptionKey: Uint8Array | null = null;
+    private normalizedBackupPrefix: string;
 
     constructor(s3Provider: S3Provider, settings: S3SyncBackupSettings) {
         this.s3Provider = s3Provider;
         this.settings = settings;
+        this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
     }
 
     /**
@@ -33,13 +37,14 @@ export class BackupDownloader {
      */
     updateSettings(settings: S3SyncBackupSettings): void {
         this.settings = settings;
+        this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
     }
 
     /**
      * Download backup manifest
      */
     async getManifest(backupName: string): Promise<BackupManifest> {
-        const key = `${this.settings.backupPrefix}/${backupName}/.backup-manifest.json`;
+        const key = addPrefix(`${backupName}/.backup-manifest.json`, this.normalizedBackupPrefix);
         const manifestJson = await this.s3Provider.downloadFileAsText(key);
         return JSON.parse(manifestJson) as BackupManifest;
     }
@@ -48,7 +53,7 @@ export class BackupDownloader {
      * Download a single file from backup
      */
     async downloadFile(backupName: string, filePath: string): Promise<Uint8Array> {
-        const key = `${this.settings.backupPrefix}/${backupName}/${filePath}`;
+        const key = addPrefix(`${backupName}/${filePath}`, this.normalizedBackupPrefix);
         let content = await this.s3Provider.downloadFile(key);
 
         // Check if backup was encrypted
@@ -70,7 +75,8 @@ export class BackupDownloader {
         const manifest = await this.getManifest(backupName);
 
         // List all files in backup
-        const prefix = `${this.settings.backupPrefix}/${backupName}/`;
+        const prefix = addPrefix(`${backupName}`, this.normalizedBackupPrefix);
+        const prefixWithSlash = `${prefix}/`;
         const objects = await this.s3Provider.listObjects(prefix, true);
 
         for (const obj of objects) {
@@ -78,7 +84,8 @@ export class BackupDownloader {
             if (obj.key.endsWith('.backup-manifest.json')) continue;
 
             // Extract relative path
-            const relativePath = obj.key.substring(prefix.length);
+            const relativePath = removePrefix(obj.key, prefix) ?? removePrefix(obj.key, prefixWithSlash) ?? '';
+            if (!relativePath) continue;
 
             try {
                 let content = await this.s3Provider.downloadFile(obj.key);
@@ -99,30 +106,19 @@ export class BackupDownloader {
 
     /**
      * Create a downloadable blob from backup files
-     * Note: This creates a simple concatenated format, not a real ZIP
-     * For real ZIP support, would need to add a ZIP library
      */
     async createDownloadBlob(backupName: string): Promise<Blob> {
         const files = await this.downloadBackup(backupName);
-
-        // For now, create a simple text representation
-        // In production, you'd use a ZIP library like JSZip
-        const textContent: string[] = [];
-
-        textContent.push(`Backup: ${backupName}`);
-        textContent.push(`Files: ${files.size}`);
-        textContent.push('---');
+        const zip = new JSZip();
 
         for (const [path, content] of files) {
-            textContent.push(`\n=== ${path} ===\n`);
-            try {
-                textContent.push(new TextDecoder().decode(content));
-            } catch {
-                textContent.push(`[Binary file: ${content.length} bytes]`);
-            }
+            zip.file(path, content);
         }
 
-        return new Blob([textContent.join('\n')], { type: 'text/plain' });
+        const manifest = await this.getManifest(backupName);
+        zip.file('.backup-manifest.json', JSON.stringify(manifest, null, 2));
+
+        return await zip.generateAsync({ type: 'blob' });
     }
 
     /**
@@ -135,7 +131,7 @@ export class BackupDownloader {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${backupName}.txt`;
+        link.download = `${backupName}.zip`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

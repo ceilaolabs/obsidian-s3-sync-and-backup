@@ -7,6 +7,7 @@
 
 import { S3Provider } from '../storage/S3Provider';
 import { S3SyncBackupSettings, BackupInfo, BackupManifest } from '../types';
+import { addPrefix, normalizePrefix } from '../utils/paths';
 
 /**
  * RetentionManager class - Manages backup retention
@@ -14,10 +15,12 @@ import { S3SyncBackupSettings, BackupInfo, BackupManifest } from '../types';
 export class RetentionManager {
     private s3Provider: S3Provider;
     private settings: S3SyncBackupSettings;
+    private normalizedBackupPrefix: string;
 
     constructor(s3Provider: S3Provider, settings: S3SyncBackupSettings) {
         this.s3Provider = s3Provider;
         this.settings = settings;
+        this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
     }
 
     /**
@@ -25,6 +28,7 @@ export class RetentionManager {
      */
     updateSettings(settings: S3SyncBackupSettings): void {
         this.settings = settings;
+        this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
     }
 
     /**
@@ -79,8 +83,9 @@ export class RetentionManager {
      * List all backups
      */
     async listBackups(): Promise<BackupInfo[]> {
-        const prefix = `${this.settings.backupPrefix}/`;
-        const objects = await this.s3Provider.listObjects(prefix, true);
+        const prefix = this.normalizedBackupPrefix;
+        const prefixWithSlash = prefix ? `${prefix}/` : '';
+        const objects = await this.s3Provider.listObjects(prefixWithSlash, true);
 
         // Find unique backup folders
         const backupFolders = new Set<string>();
@@ -88,7 +93,7 @@ export class RetentionManager {
 
         for (const obj of objects) {
             // Extract backup folder name from key
-            const relativePath = obj.key.substring(prefix.length);
+            const relativePath = obj.key.substring(prefixWithSlash.length);
             const folderEnd = relativePath.indexOf('/');
 
             if (folderEnd > 0) {
@@ -107,7 +112,7 @@ export class RetentionManager {
         const backups: BackupInfo[] = [];
 
         for (const folder of backupFolders) {
-            const manifestKey = `${prefix}${folder}/.backup-manifest.json`;
+            const manifestKey = addPrefix(`${folder}/.backup-manifest.json`, this.normalizedBackupPrefix);
 
             try {
                 const manifestJson = await this.s3Provider.downloadFileAsText(manifestKey);
@@ -140,7 +145,7 @@ export class RetentionManager {
      * Delete a backup folder
      */
     async deleteBackup(backupName: string): Promise<void> {
-        const prefix = `${this.settings.backupPrefix}/${backupName}/`;
+        const prefix = addPrefix(`${backupName}/`, this.normalizedBackupPrefix);
         await this.s3Provider.deletePrefix(prefix);
     }
 

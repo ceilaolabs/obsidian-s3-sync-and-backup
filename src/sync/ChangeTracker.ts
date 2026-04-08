@@ -7,6 +7,8 @@
 
 import { App, TFile, TAbstractFile } from 'obsidian';
 import { hashContent } from '../crypto/Hasher';
+import { isConflictFile, matchesAnyGlob } from '../utils/paths';
+import { readVaultFile } from '../utils/vaultFiles';
 import { SyncJournal } from './SyncJournal';
 
 /**
@@ -30,9 +32,32 @@ export class ChangeTracker {
     private journal: SyncJournal;
     private pendingChanges: Map<string, PendingChange> = new Map();
     private excludePatterns: string[] = [];
-    private debounceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    /**
+     * Per-file debounce timers.
+     * Each file gets its own timer so rapid edits to different files
+     * do not cancel each other's journal updates.
+     */
+    private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private debounceMs = 300;
     private isTracking = false;
+
+    /**
+     * Flag to pause journal updates during sync operations.
+     * When true, file events are still tracked but journal is not updated.
+     * This prevents race conditions between sync and change tracking.
+     */
+    private isSyncInProgress = false;
+
+    /**
+     * Paths that are currently being synced (downloaded/uploaded).
+     * Changes to these paths are ignored to prevent race conditions.
+     */
+    private syncingPaths: Set<string> = new Set();
+
+    /**
+     * Paths changed while sync was actively touching them.
+     */
+    private dirtyWhileSyncing: Set<string> = new Set();
 
     // Event handlers bound to this
     private onCreateHandler: (file: TAbstractFile) => void;
@@ -49,6 +74,34 @@ export class ChangeTracker {
         this.onModifyHandler = (file) => { void this.onFileModify(file); };
         this.onDeleteHandler = (file) => { void this.onFileDelete(file); };
         this.onRenameHandler = (file, oldPath) => { void this.onFileRename(file, oldPath); };
+    }
+
+    /**
+     * Mark that a sync operation is in progress.
+     * During sync, journal updates are paused to prevent race conditions.
+     */
+    setSyncInProgress(inProgress: boolean): void {
+        this.isSyncInProgress = inProgress;
+        if (!inProgress) {
+            // Clear syncing paths when sync completes
+            this.syncingPaths.clear();
+            void this.flushDirtyPaths();
+        }
+    }
+
+    /**
+     * Mark a path as currently being synced.
+     * Events for this path will be ignored until sync completes.
+     */
+    markPathSyncing(path: string): void {
+        this.syncingPaths.add(path);
+    }
+
+    /**
+     * Check if a path is currently being synced
+     */
+    private isPathSyncing(path: string): boolean {
+        return this.syncingPaths.has(path);
     }
 
     /**
@@ -83,26 +136,23 @@ export class ChangeTracker {
         this.app.vault.off('delete', this.onDeleteHandler);
         this.app.vault.off('rename', this.onRenameHandler);
 
-        // Clear pending timeout
-        if (this.debounceTimeoutId) {
-            clearTimeout(this.debounceTimeoutId);
-            this.debounceTimeoutId = null;
+        // Clear all pending debounce timers
+        for (const timer of this.debounceTimers.values()) {
+            clearTimeout(timer);
         }
+        this.debounceTimers.clear();
     }
 
     /**
      * Check if a file should be excluded from tracking
+     *
+     * Supports glob patterns:
+     * - `*` matches any characters except /
+     * - `**` matches any characters including /
+     * - Patterns are matched against the FULL path
      */
     private shouldExclude(path: string): boolean {
-        return this.excludePatterns.some((pattern) => {
-            // Simple glob matching - supports * and **
-            const regexPattern = pattern
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '.*')
-                .replace(/\*/g, '[^/]*');
-            const regex = new RegExp(`^${regexPattern}$`);
-            return regex.test(path);
-        });
+        return isConflictFile(path) || matchesAnyGlob(path, this.excludePatterns);
     }
 
     /**
@@ -111,6 +161,13 @@ export class ChangeTracker {
     private async onFileCreate(file: TAbstractFile): Promise<void> {
         if (!(file instanceof TFile)) return;
         if (this.shouldExclude(file.path)) return;
+
+        // Skip journal update if this path is being synced
+        // This prevents race conditions during download operations
+        if (this.isPathSyncing(file.path)) {
+            this.dirtyWhileSyncing.add(file.path);
+            return;
+        }
 
         this.addPendingChange({
             path: file.path,
@@ -129,6 +186,13 @@ export class ChangeTracker {
         if (!(file instanceof TFile)) return;
         if (this.shouldExclude(file.path)) return;
 
+        // Skip journal update if this path is being synced
+        // This prevents race conditions during upload/download operations
+        if (this.isPathSyncing(file.path)) {
+            this.dirtyWhileSyncing.add(file.path);
+            return;
+        }
+
         this.addPendingChange({
             path: file.path,
             type: 'modify',
@@ -145,6 +209,13 @@ export class ChangeTracker {
     private async onFileDelete(file: TAbstractFile): Promise<void> {
         if (!(file instanceof TFile)) return;
         if (this.shouldExclude(file.path)) return;
+
+        // Skip journal update if this path is being synced
+        // This prevents race conditions during delete operations
+        if (this.isPathSyncing(file.path)) {
+            this.dirtyWhileSyncing.add(file.path);
+            return;
+        }
 
         this.addPendingChange({
             path: file.path,
@@ -164,28 +235,36 @@ export class ChangeTracker {
 
         const excludeOld = this.shouldExclude(oldPath);
         const excludeNew = this.shouldExclude(file.path);
+        const timestamp = Date.now();
 
         // Handle various rename scenarios
         if (!excludeOld && !excludeNew) {
-            // Normal rename - track both old (delete) and new (create)
+            // Normal rename - queue a remote delete for the old path and an
+            // upload for the new path.
+            this.addPendingChange({
+                path: oldPath,
+                type: 'delete',
+                timestamp,
+            });
+
             this.addPendingChange({
                 path: file.path,
                 type: 'rename',
-                timestamp: Date.now(),
+                timestamp,
                 oldPath,
             });
 
-            // Delete old entry from journal
-            await this.journal.deleteEntry(oldPath);
+            // Keep the old entry as a pending deletion so the remote path is removed.
+            await this.journal.markDeleted(oldPath);
 
-            // Add new entry
+            // Record the new path as a pending upload/new file.
             await this.updateJournalForFile(file);
         } else if (!excludeOld && excludeNew) {
             // Moved to excluded location - treat as delete
             this.addPendingChange({
                 path: oldPath,
                 type: 'delete',
-                timestamp: Date.now(),
+                timestamp,
             });
             await this.journal.markDeleted(oldPath);
         } else if (excludeOld && !excludeNew) {
@@ -193,7 +272,7 @@ export class ChangeTracker {
             this.addPendingChange({
                 path: file.path,
                 type: 'create',
-                timestamp: Date.now(),
+                timestamp,
             });
             await this.updateJournalForFile(file);
         }
@@ -201,15 +280,19 @@ export class ChangeTracker {
     }
 
     /**
-     * Add a pending change, debouncing rapid changes to same file
+     * Add a pending change, debouncing rapid changes to same file.
+     * Delete and rename events always overwrite prior create/modify entries
+     * because the file no longer exists at the original path.
      */
     private addPendingChange(change: PendingChange): void {
-        // For deletes and renames, always record
-        // For create/modify, update existing pending change
         const existing = this.pendingChanges.get(change.path);
 
+        if (change.type === 'delete' || change.type === 'rename') {
+            this.pendingChanges.set(change.path, change);
+            return;
+        }
+
         if (existing && (existing.type === 'create' || existing.type === 'modify')) {
-            // Update timestamp, keep type as modify
             existing.timestamp = change.timestamp;
             if (change.type === 'modify') {
                 existing.type = 'modify';
@@ -220,17 +303,22 @@ export class ChangeTracker {
     }
 
     /**
-     * Debounce journal updates for modified files
+     * Debounce journal updates for modified files.
+     * Uses per-file timers so concurrent edits to different files
+     * each get their journal updated independently.
      */
     private debounceJournalUpdate(file: TFile): void {
-        if (this.debounceTimeoutId) {
-            clearTimeout(this.debounceTimeoutId);
+        const existing = this.debounceTimers.get(file.path);
+        if (existing) {
+            clearTimeout(existing);
         }
 
-        this.debounceTimeoutId = setTimeout(() => {
+        const timer = setTimeout(() => {
+            this.debounceTimers.delete(file.path);
             void this.updateJournalForFile(file);
-            this.debounceTimeoutId = null;
         }, this.debounceMs);
+
+        this.debounceTimers.set(file.path, timer);
     }
 
     /**
@@ -238,13 +326,61 @@ export class ChangeTracker {
      */
     private async updateJournalForFile(file: TFile): Promise<void> {
         try {
-            const content = await this.app.vault.read(file);
+            const content = await readVaultFile(this.app.vault, file);
             const hash = await hashContent(content);
             const mtime = file.stat.mtime;
 
             await this.journal.markPending(file.path, hash, mtime);
         } catch (error) {
             console.error(`Failed to update journal for ${file.path}:`, error);
+        }
+    }
+
+    /**
+     * Re-scan paths that changed while sync was actively mutating them.
+     * Skips journal update when the file hash matches the synced baseline,
+     * which avoids overwriting a freshly synced entry back to 'pending'.
+     */
+    private async flushDirtyPaths(): Promise<void> {
+        const dirtyPaths = Array.from(this.dirtyWhileSyncing.values());
+        this.dirtyWhileSyncing.clear();
+
+        for (const path of dirtyPaths) {
+            if (this.shouldExclude(path)) {
+                continue;
+            }
+
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                try {
+                    const content = await readVaultFile(this.app.vault, file);
+                    const hash = await hashContent(content);
+
+                    const journalEntry = await this.journal.getEntry(path);
+                    if (journalEntry?.status === 'synced' && journalEntry.localHash === hash) {
+                        continue;
+                    }
+
+                    this.addPendingChange({
+                        path,
+                        type: 'modify',
+                        timestamp: Date.now(),
+                    });
+                    await this.journal.markPending(path, hash, file.stat.mtime);
+                } catch (error) {
+                    console.error(`Failed to flush dirty path ${path}:`, error);
+                }
+                continue;
+            }
+
+            if (await this.journal.hasEntry(path)) {
+                this.addPendingChange({
+                    path,
+                    type: 'delete',
+                    timestamp: Date.now(),
+                });
+                await this.journal.markDeleted(path);
+            }
         }
     }
 

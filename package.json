@@ -48,6 +48,7 @@
 		"@smithy/types": "^4.11.0",
 		"hash-wasm": "^4.11.0",
 		"idb": "^8.0.1",
+		"jszip": "^3.10.1",
 		"obsidian": "latest",
 		"tweetnacl": "^1.0.3"
 	}

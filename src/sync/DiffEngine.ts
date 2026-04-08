@@ -54,10 +54,8 @@ export function computeThreeWayDiff(
             return 'unchanged';
         }
 
-        // If no journal entry, this is first sync
+        // If no journal entry, this is first sync — hashes already confirmed different above
         if (!journal) {
-            // Both exist but never synced - compare timestamps to decide
-            // Caller should handle this as potential conflict or merge
             return 'both-changed';
         }
 

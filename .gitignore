@@ -26,3 +26,8 @@ data.json
 
 # Environment variables
 .env
+
+
+# Skills
+.agents/skills/*
+skills-lock.json

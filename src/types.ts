@@ -134,7 +134,7 @@ export const DEFAULT_SETTINGS: S3SyncBackupSettings = {
 	retentionDays: 30,
 	retentionCopies: 30,
 
-	excludePatterns: ['workspace*', '.trash/*'],
+	excludePatterns: ['**/workspace*', '.trash/**'],
 	debugLogging: false,
 };
 
@@ -162,6 +162,8 @@ export interface SyncJournalEntry {
 	localHash: string;
 	/** SHA-256 hash of remote file content */
 	remoteHash: string;
+	/** S3 ETag for detecting remote changes (MD5-based) */
+	remoteEtag?: string;
 	/** Local file modification time (epoch ms) */
 	localMtime: number;
 	/** Remote file modification time (epoch ms) */
@@ -178,6 +180,7 @@ export interface SyncJournalEntry {
  * Action to take for a file during sync
  */
 export type SyncAction =
+	| 'adopt'
 	| 'upload'
 	| 'download'
 	| 'delete-local'
@@ -194,6 +197,7 @@ export interface SyncPlanItem {
 	reason: string;
 	localHash?: string;
 	remoteHash?: string;
+	remoteEtag?: string;
 }
 
 /**
@@ -218,6 +222,58 @@ export interface SyncError {
 	action: SyncAction;
 	message: string;
 	recoverable: boolean;
+}
+
+/**
+ * File kind used when reading/writing vault content.
+ */
+export type VaultFileKind = 'text' | 'binary';
+
+/**
+ * Remote sync entry stored in the shared manifest.
+ */
+export interface RemoteSyncFileEntry {
+	path: string;
+	contentHash: string;
+	size: number;
+	kind: VaultFileKind;
+	updatedAt: number;
+	lastModifiedBy: string;
+	etag?: string;
+}
+
+/**
+ * Remote deletion tombstone stored in the shared manifest.
+ */
+export interface RemoteSyncTombstone {
+	path: string;
+	deletedAt: number;
+	deletedBy: string;
+	previousHash?: string;
+}
+
+/**
+ * Shared remote sync manifest.
+ */
+export interface RemoteSyncManifest {
+	version: 1;
+	generation: number;
+	updatedAt: number;
+	updatedBy: string;
+	files: Record<string, RemoteSyncFileEntry>;
+	tombstones: Record<string, RemoteSyncTombstone>;
+}
+
+/**
+ * Remote device registry entry used for future cleanup and diagnostics.
+ */
+export interface RemoteSyncDeviceInfo {
+	deviceId: string;
+	deviceName: string;
+	platform: string;
+	lastSeenAt: number;
+	createdAt: number;
+	manifestGeneration: number;
 }
 
 // =============================================================================
@@ -275,6 +331,7 @@ export interface BackupResult {
  * Sync status for status bar display
  */
 export type SyncStatus =
+	| 'idle'        // Cloud connected but no completed sync yet
 	| 'synced'      // ✓ Sync completed
 	| 'syncing'     // ↻ Sync in progress
 	| 'error'       // ! Error occurred
@@ -286,6 +343,7 @@ export type SyncStatus =
  * Backup status for status bar display
  */
 export type BackupStatus =
+	| 'idle'        // Ready but no completed backup yet
 	| 'completed'   // ✓ Backup completed
 	| 'running'     // ↻ Backup in progress
 	| 'error'       // ! Error occurred

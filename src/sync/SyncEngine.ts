@@ -1,94 +1,165 @@
 /**
  * Sync Engine Module
  *
- * Core synchronization logic that orchestrates bi-directional sync
- * between local vault and S3 storage.
+ * Orchestrates bi-directional vault synchronization using a shared remote
+ * manifest and a per-device local journal.
  */
 
-import { App, TFile, Notice } from 'obsidian';
-import { S3Provider } from '../storage/S3Provider';
-import { SyncJournal } from './SyncJournal';
-import { ChangeTracker } from './ChangeTracker';
+import { App, TFile } from 'obsidian';
 import { hashContent } from '../crypto/Hasher';
+import { S3Provider } from '../storage/S3Provider';
 import {
+    addPrefix,
+    getOriginalFromConflict,
+    isConflictFile,
+    matchesAnyGlob,
+    normalizePrefix,
+    removePrefix,
+} from '../utils/paths';
+import {
+    getVaultFileKind,
+    readVaultFile,
+    toArrayBuffer,
+} from '../utils/vaultFiles';
+import {
+    RemoteSyncDeviceInfo,
+    RemoteSyncFileEntry,
+    RemoteSyncManifest,
+    RemoteSyncTombstone,
+    S3ObjectInfo,
     S3SyncBackupSettings,
-    SyncResult,
-    SyncPlanItem,
     SyncAction,
+    SyncError,
+    SyncJournalEntry,
+    SyncPlanItem,
+    SyncResult,
+    VaultFileKind,
 } from '../types';
+import { ChangeTracker } from './ChangeTracker';
+import {
+    LoadedRemoteSyncManifest,
+    RemoteSyncManifestChangedError,
+    RemoteSyncStore,
+} from './RemoteSyncStore';
+import { SyncJournal } from './SyncJournal';
+import { sleep } from '../utils/retry';
 
 /**
- * File info combining local and remote state
+ * Combined local/remote/journal state for a single vault path.
  */
 interface FileState {
     path: string;
+    kind: VaultFileKind;
+    localFile?: TFile;
     localExists: boolean;
-    remoteExists: boolean;
     localHash?: string;
-    remoteHash?: string;
     localMtime?: number;
-    remoteMtime?: number;
-    journalLocalHash?: string;
-    journalRemoteHash?: string;
-    journalSyncedAt?: number;
+    localSize?: number;
+    remoteObject?: S3ObjectInfo;
+    remoteExists: boolean;
+    manifestEntry?: RemoteSyncFileEntry;
+    tombstone?: RemoteSyncTombstone;
+    journalEntry?: SyncJournalEntry;
+    hasConflictArtifacts: boolean;
 }
 
 /**
- * SyncEngine class - Orchestrates sync operations
+ * Sync plan item extended with planner state.
+ */
+interface ExtendedSyncPlanItem extends SyncPlanItem {
+    state: FileState;
+    expectedRemoteEtag?: string;
+    expectRemoteAbsent?: boolean;
+}
+
+/**
+ * Successful action outcome queued until manifest commit and journal updates.
+ *
+ * Outcomes carry the intended manifest mutations (manifestEntry / tombstone)
+ * and enough context to perform content-hash-based rebase when a concurrent
+ * manifest write is detected (412/409).  The old `verifyRemoteState` callback
+ * was ETag-based and produced false conflicts when two devices uploaded
+ * identical content.
+ */
+interface SyncExecutionOutcome {
+    path: string;
+    action: SyncAction;
+    clearPendingPaths: string[];
+    requiresManifestCommit: boolean;
+    manifestEntry?: RemoteSyncFileEntry | null;
+    tombstone?: RemoteSyncTombstone | null;
+    applyJournal: () => Promise<void>;
+    /** Best-effort cleanup to run after manifest commit succeeds (e.g. physical S3 object deletion). */
+    postCommitCleanup?: () => Promise<void>;
+}
+
+/**
+ * Result of rebasing pending outcomes against a fresh manifest.
+ * Separates outcomes that still need committing from those that
+ * converged with another device's writes and only need journal updates.
+ */
+interface RebaseResult {
+    pending: SyncExecutionOutcome[];
+    converged: SyncExecutionOutcome[];
+}
+
+/**
+ * SyncEngine class - orchestrates sync operations.
  */
 export class SyncEngine {
-    private app: App;
-    private s3Provider: S3Provider;
-    private journal: SyncJournal;
-    private changeTracker: ChangeTracker;
-    private settings: S3SyncBackupSettings;
     private isSyncing = false;
     private debugLogging = false;
+    private deviceId: string;
+    private deviceCreatedAt: number;
+    private normalizedSyncPrefix: string;
+    private remoteStore: RemoteSyncStore;
+    private remoteContentCache = new Map<string, string | Uint8Array>();
+    private remoteHashCache = new Map<string, string>();
 
     constructor(
-        app: App,
-        s3Provider: S3Provider,
-        journal: SyncJournal,
-        changeTracker: ChangeTracker,
-        settings: S3SyncBackupSettings
+        private app: App,
+        private s3Provider: S3Provider,
+        private journal: SyncJournal,
+        private changeTracker: ChangeTracker,
+        private settings: S3SyncBackupSettings
     ) {
-        this.app = app;
-        this.s3Provider = s3Provider;
-        this.journal = journal;
-        this.changeTracker = changeTracker;
-        this.settings = settings;
         this.debugLogging = settings.debugLogging;
+        this.deviceId = this.getOrCreateStoredString('s3-sync-device-id', () => (
+            `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+        ));
+        this.deviceCreatedAt = Number(this.getOrCreateStoredString('s3-sync-device-created-at', () => String(Date.now())));
+        this.normalizedSyncPrefix = normalizePrefix(settings.syncPrefix);
+        this.remoteStore = new RemoteSyncStore(this.s3Provider, this.normalizedSyncPrefix);
     }
 
     /**
-     * Update settings
+     * Update runtime settings.
      */
     updateSettings(settings: S3SyncBackupSettings): void {
         this.settings = settings;
         this.debugLogging = settings.debugLogging;
+        this.normalizedSyncPrefix = normalizePrefix(settings.syncPrefix);
+        this.remoteStore.updateSyncPrefix(this.normalizedSyncPrefix);
     }
 
     /**
-     * Check if sync is currently in progress
+     * Check whether sync is currently running.
      */
     isInProgress(): boolean {
         return this.isSyncing;
     }
 
     /**
-     * Perform a full sync operation
+     * Run a full sync operation.
      */
     async sync(): Promise<SyncResult> {
         if (this.isSyncing) {
             throw new Error('Sync already in progress');
         }
 
-        const startedAt = Date.now();
-        this.isSyncing = true;
-
         const result: SyncResult = {
             success: false,
-            startedAt,
+            startedAt: Date.now(),
             completedAt: 0,
             filesUploaded: 0,
             filesDownloaded: 0,
@@ -97,23 +168,26 @@ export class SyncEngine {
             errors: [],
         };
 
+        this.isSyncing = true;
+        this.changeTracker.setSyncInProgress(true);
+        this.remoteContentCache.clear();
+        this.remoteHashCache.clear();
+
         try {
-            this.log('Starting sync...');
+            this.log('Starting sync');
 
-            // 1. Build file state map
-            const fileStates = await this.buildFileStateMap();
-            this.log(`Found ${fileStates.size} unique file paths`);
+            const loadedManifest = await this.remoteStore.loadManifest();
+            const states = await this.buildFileStateMap(loadedManifest.manifest);
+            const syncPlan = await this.generateSyncPlan(states);
+            const outcomes: SyncExecutionOutcome[] = [];
 
-            // 2. Generate sync plan
-            const syncPlan = this.generateSyncPlan(fileStates);
-            this.log(`Sync plan: ${syncPlan.length} actions`);
-
-            // 3. Execute sync plan
             for (const item of syncPlan) {
                 try {
-                    await this.executeAction(item);
+                    this.changeTracker.markPathSyncing(item.path);
+                    const outcome = await this.executeAction(item);
+                    outcomes.push(outcome);
 
-                    switch (item.action) {
+                    switch (outcome.action) {
                         case 'upload':
                             result.filesUploaded++;
                             break;
@@ -124,37 +198,51 @@ export class SyncEngine {
                         case 'delete-remote':
                             result.filesDeleted++;
                             break;
+                        case 'adopt':
                         case 'conflict':
-                            result.conflicts.push(item.path);
+                        case 'skip':
                             break;
                     }
                 } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                    result.errors.push({
-                        path: item.path,
-                        action: item.action,
-                        message: errorMessage,
-                        recoverable: true,
-                    });
+                    result.errors.push(this.createSyncError(item.path, item.action, error, true));
                 }
             }
 
-            // 4. Clear pending changes after successful sync
-            this.changeTracker.clearPendingChanges();
+            const { committedPaths, convergedOutcomes } = await this.commitManifestChanges(loadedManifest, outcomes, result.errors);
 
+            for (const outcome of outcomes) {
+                const canApply = !outcome.requiresManifestCommit || committedPaths.has(outcome.path);
+                if (!canApply) {
+                    continue;
+                }
+
+                await outcome.applyJournal();
+                for (const path of outcome.clearPendingPaths) {
+                    this.changeTracker.clearPendingChange(path);
+                }
+
+                if (outcome.postCommitCleanup) {
+                    await outcome.postCommitCleanup();
+                }
+            }
+
+            for (const converged of convergedOutcomes) {
+                await converged.applyJournal();
+                for (const path of converged.clearPendingPaths) {
+                    this.changeTracker.clearPendingChange(path);
+                }
+            }
+
+            result.conflicts = (await this.journal.getConflictedEntries()).map((entry) => entry.path);
             result.success = result.errors.length === 0;
-            this.log(`Sync completed: ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted, ${result.conflicts.length} conflicts`);
-
+            this.log(`Sync completed with ${result.errors.length} error(s)`);
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            result.errors.push({
-                path: '',
-                action: 'skip',
-                message: errorMessage,
-                recoverable: false,
-            });
+            result.errors.push(this.createSyncError('', 'skip', error, false));
         } finally {
             this.isSyncing = false;
+            this.changeTracker.setSyncInProgress(false);
+            this.remoteContentCache.clear();
+            this.remoteHashCache.clear();
             result.completedAt = Date.now();
         }
 
@@ -162,369 +250,885 @@ export class SyncEngine {
     }
 
     /**
-     * Build a map of all files with their local and remote state
+     * Build the planner state map from local files, remote files, manifest, and journal.
+     * Pre-locks all local file paths via markPathSyncing so vault events during
+     * the async iteration are deferred rather than racing with the state build.
      */
-    private async buildFileStateMap(): Promise<Map<string, FileState>> {
+    private async buildFileStateMap(manifest: RemoteSyncManifest): Promise<Map<string, FileState>> {
         const states = new Map<string, FileState>();
+        const conflictOriginalPaths = new Set<string>();
 
-        // Get all local files
-        const localFiles = this.app.vault.getFiles();
+        const localFiles = this.app.vault.getFiles().filter(
+            (file) => !isConflictFile(file.path) && !this.shouldExclude(file.path)
+        );
+
         for (const file of localFiles) {
-            if (this.shouldExclude(file.path)) continue;
+            this.changeTracker.markPathSyncing(file.path);
+        }
 
-            const content = await this.app.vault.read(file);
-            const hash = await hashContent(content);
+        for (const file of this.app.vault.getFiles()) {
+            if (isConflictFile(file.path)) {
+                const originalPath = getOriginalFromConflict(file.path);
+                if (originalPath) {
+                    conflictOriginalPaths.add(originalPath);
+                }
+                continue;
+            }
 
+            if (this.shouldExclude(file.path)) {
+                continue;
+            }
+
+            const content = await this.readLocalFileContent(file);
             states.set(file.path, {
                 path: file.path,
+                kind: getVaultFileKind(file.path),
+                localFile: file,
                 localExists: true,
-                remoteExists: false,
-                localHash: hash,
+                localHash: await hashContent(content),
                 localMtime: file.stat.mtime,
+                localSize: file.stat.size,
+                remoteExists: false,
+                hasConflictArtifacts: false,
             });
         }
 
-        // Get all remote files
-        const prefix = this.settings.syncPrefix;
-        const remoteObjects = await this.s3Provider.listObjects(`${prefix}/`);
+        for (const objectInfo of await this.s3Provider.listObjects(this.getRemoteListPrefix())) {
+            if (this.remoteStore.isMetadataKey(objectInfo.key)) {
+                continue;
+            }
 
-        for (const obj of remoteObjects) {
-            // Skip internal files
-            if (obj.key.includes('.obsidian-s3-sync/')) continue;
+            const relativePath = this.s3KeyToLocalPath(objectInfo.key);
+            if (!relativePath || this.shouldExclude(relativePath)) {
+                continue;
+            }
 
-            // Extract relative path
-            const relativePath = this.s3KeyToLocalPath(obj.key);
-            if (!relativePath) continue;
-            if (this.shouldExclude(relativePath)) continue;
+            const state = this.getOrCreateState(states, relativePath);
+            state.remoteExists = true;
+            state.remoteObject = {
+                ...objectInfo,
+                etag: objectInfo.etag?.replace(/"/g, ''),
+            };
+        }
 
-            const existing = states.get(relativePath);
-            if (existing) {
-                existing.remoteExists = true;
-                existing.remoteMtime = obj.lastModified.getTime();
-                // ETag can serve as hash (with some caveats for multipart uploads)
-                existing.remoteHash = obj.etag?.replace(/"/g, '') || '';
-            } else {
-                states.set(relativePath, {
-                    path: relativePath,
-                    localExists: false,
-                    remoteExists: true,
-                    remoteMtime: obj.lastModified.getTime(),
-                    remoteHash: obj.etag?.replace(/"/g, '') || '',
-                });
+        for (const [path, entry] of Object.entries(manifest.files)) {
+            if (!this.shouldExclude(path)) {
+                this.getOrCreateState(states, path).manifestEntry = entry;
             }
         }
 
-        // Merge journal state
-        const journalEntries = await this.journal.getAllEntries();
-        for (const entry of journalEntries) {
-            const existing = states.get(entry.path);
-            if (existing) {
-                existing.journalLocalHash = entry.localHash;
-                existing.journalRemoteHash = entry.remoteHash;
-                existing.journalSyncedAt = entry.syncedAt;
-            } else {
-                // File in journal but not local or remote - was deleted
-                states.set(entry.path, {
-                    path: entry.path,
-                    localExists: false,
-                    remoteExists: false,
-                    journalLocalHash: entry.localHash,
-                    journalRemoteHash: entry.remoteHash,
-                    journalSyncedAt: entry.syncedAt,
-                });
+        for (const [path, tombstone] of Object.entries(manifest.tombstones)) {
+            if (!this.shouldExclude(path)) {
+                this.getOrCreateState(states, path).tombstone = tombstone;
             }
+        }
+
+        for (const entry of await this.journal.getAllEntries()) {
+            if (!this.shouldExclude(entry.path)) {
+                this.getOrCreateState(states, entry.path).journalEntry = entry;
+            }
+        }
+
+        for (const path of conflictOriginalPaths) {
+            this.getOrCreateState(states, path).hasConflictArtifacts = true;
         }
 
         return states;
     }
 
     /**
-     * Generate sync plan based on file states
+     * Generate a sync plan from the planner state map.
      */
-    private generateSyncPlan(states: Map<string, FileState>): SyncPlanItem[] {
-        const plan: SyncPlanItem[] = [];
+    private async generateSyncPlan(states: Map<string, FileState>): Promise<ExtendedSyncPlanItem[]> {
+        const plan: ExtendedSyncPlanItem[] = [];
 
-        for (const [path, state] of states) {
-            const action = this.determineAction(state);
-            if (action !== 'skip') {
-                plan.push({
-                    path,
-                    action,
-                    reason: this.getActionReason(state, action),
-                    localHash: state.localHash,
-                    remoteHash: state.remoteHash,
-                });
+        for (const state of states.values()) {
+            const action = await this.determineAction(state);
+            if (action === 'skip') {
+                continue;
             }
+
+            plan.push({
+                path: state.path,
+                action,
+                reason: this.getActionReason(state, action),
+                localHash: state.localHash,
+                remoteHash: state.manifestEntry?.contentHash,
+                remoteEtag: state.remoteObject?.etag ?? state.manifestEntry?.etag,
+                expectedRemoteEtag: state.remoteObject?.etag,
+                expectRemoteAbsent: !state.remoteExists,
+                state,
+            });
         }
 
+        plan.sort((left, right) => left.path.localeCompare(right.path));
         return plan;
     }
 
     /**
-     * Determine what action to take for a file
+     * Determine the correct sync action for a path.
      */
-    private determineAction(state: FileState): SyncAction {
-        const { localExists, remoteExists, localHash, remoteHash, journalLocalHash, journalRemoteHash } = state;
+    private async determineAction(state: FileState): Promise<SyncAction> {
+        const journal = state.journalEntry;
+        const hasBaseline = journal !== undefined && journal.syncedAt > 0;
+        const localChanged = this.hasLocalChanges(state);
+        const localDeleted = !state.localExists && journal !== undefined && (journal.status === 'deleted' || hasBaseline);
 
-        // Both exist
-        if (localExists && remoteExists) {
-            // Check if content is the same (using hashes)
-            if (localHash && remoteHash && localHash === remoteHash) {
-                return 'skip'; // Already in sync
+        if (journal?.status === 'conflict') {
+            if (state.hasConflictArtifacts || !state.localExists) {
+                return 'skip';
             }
 
-            // Check if local changed since last sync
-            const localChanged = journalLocalHash && localHash !== journalLocalHash;
-            // Check if remote changed since last sync
-            const remoteChanged = journalRemoteHash && remoteHash !== journalRemoteHash;
+            return 'upload';
+        }
 
-            if (localChanged && remoteChanged) {
-                return 'conflict'; // Both changed
-            } else if (localChanged) {
-                return 'upload'; // Only local changed
-            } else if (remoteChanged) {
-                return 'download'; // Only remote changed
-            } else if (!journalLocalHash) {
-                // First sync - compare timestamps
-                if ((state.localMtime || 0) > (state.remoteMtime || 0)) {
-                    return 'upload';
-                } else {
-                    return 'download';
+        if (state.tombstone) {
+            if (state.localExists) {
+                const localUpdatedAfterDelete = (state.localMtime ?? 0) > state.tombstone.deletedAt;
+                return localUpdatedAfterDelete || localChanged ? 'upload' : 'delete-local';
+            }
+
+            return state.remoteExists ? 'delete-remote' : 'skip';
+        }
+
+        if (state.manifestEntry) {
+            if (!state.remoteExists) {
+                return state.localExists ? 'upload' : 'delete-remote';
+            }
+
+            const sameAsManifest = state.localExists && state.localHash === state.manifestEntry.contentHash;
+            const remoteChanged = !hasBaseline || journal?.remoteHash !== state.manifestEntry.contentHash;
+
+            if (state.localExists) {
+                if (!hasBaseline) {
+                    return sameAsManifest ? 'adopt' : 'conflict';
                 }
-            }
-            return 'skip';
-        }
 
-        // Only exists locally
-        if (localExists && !remoteExists) {
-            if (journalRemoteHash) {
-                // Was synced before, now missing remotely = delete locally
-                return 'delete-local';
-            } else {
-                // New local file = upload
-                return 'upload';
-            }
-        }
+                if (!localChanged && !remoteChanged) {
+                    return journal?.status === 'synced' ? 'skip' : 'adopt';
+                }
 
-        // Only exists remotely
-        if (!localExists && remoteExists) {
-            if (journalLocalHash) {
-                // Was synced before, now missing locally = delete remotely
-                return 'delete-remote';
-            } else {
-                // New remote file = download
+                if (localChanged && remoteChanged) {
+                    return sameAsManifest ? 'adopt' : 'conflict';
+                }
+
+                if (localChanged) {
+                    return 'upload';
+                }
+
+                return sameAsManifest ? 'adopt' : 'download';
+            }
+
+            if (!hasBaseline) {
                 return 'download';
             }
+
+            return localDeleted && !remoteChanged ? 'delete-remote' : 'download';
         }
 
-        // Neither exists (was in journal) - cleanup
+        if (state.remoteExists) {
+            const remoteHash = await this.getRemoteHash(state.path);
+
+            if (!state.localExists) {
+                if (journal?.status === 'deleted' && journal.remoteHash === remoteHash) {
+                    return 'delete-remote';
+                }
+
+                return 'download';
+            }
+
+            return state.localHash === remoteHash ? 'adopt' : 'conflict';
+        }
+
+        if (state.localExists) {
+            return 'upload';
+        }
+
         return 'skip';
     }
 
     /**
-     * Get human-readable reason for action
+     * Get a user-facing action reason.
      */
     private getActionReason(state: FileState, action: SyncAction): string {
         switch (action) {
+            case 'adopt':
+                return state.manifestEntry ? 'Adopt existing shared state' : 'Create shared metadata baseline';
             case 'upload':
-                return state.journalLocalHash ? 'Local file modified' : 'New local file';
+                return state.tombstone ? 'Local file recreated after remote delete' : state.manifestEntry ? 'Local file modified' : 'New local file';
             case 'download':
-                return state.journalRemoteHash ? 'Remote file modified' : 'New remote file';
+                return state.manifestEntry ? 'Remote file modified' : 'New remote file';
             case 'delete-local':
                 return 'Deleted remotely';
             case 'delete-remote':
                 return 'Deleted locally';
             case 'conflict':
-                return 'Modified on both local and remote';
+                return 'Local and remote contents diverged without a safe baseline';
             case 'skip':
                 return 'No changes';
         }
     }
 
     /**
-     * Execute a single sync action
+     * Execute a planned action.
      */
-    private async executeAction(item: SyncPlanItem): Promise<void> {
+    private async executeAction(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
         this.log(`Executing ${item.action} for ${item.path}: ${item.reason}`);
 
         switch (item.action) {
+            case 'adopt':
+                return await this.adoptPath(item);
             case 'upload':
-                await this.uploadFile(item.path);
-                break;
+                return await this.uploadPath(item);
             case 'download':
-                await this.downloadFile(item.path);
-                break;
+                return await this.downloadPath(item);
             case 'delete-local':
-                await this.deleteLocalFile(item.path);
-                break;
+                return await this.deleteLocalPath(item);
             case 'delete-remote':
-                await this.deleteRemoteFile(item.path);
-                break;
+                return await this.deleteRemotePath(item);
             case 'conflict':
-                await this.handleConflict(item.path);
-                break;
+                return await this.handleConflict(item);
+            case 'skip':
+                return {
+                    path: item.path,
+                    action: 'skip',
+                    clearPendingPaths: [],
+                    requiresManifestCommit: false,
+                    applyJournal: async () => undefined,
+                };
         }
     }
 
     /**
-     * Upload a file to S3
+     * Adopt matching local/remote content without transferring bytes.
      */
-    private async uploadFile(path: string): Promise<void> {
-        const file = this.app.vault.getAbstractFileByPath(path);
+    private async adoptPath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
+        const state = item.state;
+        const remoteHash = state.manifestEntry?.contentHash ?? await this.getRemoteHash(item.path);
+        const remoteEtag = state.remoteObject?.etag ?? state.manifestEntry?.etag;
+        const remoteUpdatedAt = state.manifestEntry?.updatedAt ?? state.remoteObject?.lastModified.getTime() ?? Date.now();
+        const remoteSize = state.manifestEntry?.size ?? state.remoteObject?.size ?? state.localSize ?? 0;
+        const remoteLastModifiedBy = state.manifestEntry?.lastModifiedBy ?? 'unknown';
+        const localMtime = state.localFile?.stat.mtime ?? state.localMtime ?? Date.now();
+        const requiresManifestCommit = state.manifestEntry === undefined || state.tombstone !== undefined;
+        const manifestEntry: RemoteSyncFileEntry | undefined = requiresManifestCommit
+            ? {
+                path: item.path,
+                contentHash: remoteHash,
+                size: remoteSize,
+                kind: state.kind,
+                updatedAt: remoteUpdatedAt,
+                lastModifiedBy: remoteLastModifiedBy,
+                etag: remoteEtag,
+            }
+            : undefined;
+
+        return {
+            path: item.path,
+            action: 'adopt',
+            clearPendingPaths: [item.path],
+            requiresManifestCommit,
+            manifestEntry,
+            tombstone: requiresManifestCommit ? null : undefined,
+            applyJournal: async () => {
+                await this.journal.markSynced(
+                    item.path,
+                    state.localHash ?? remoteHash,
+                    remoteHash,
+                    localMtime,
+                    remoteUpdatedAt,
+                    remoteEtag,
+                    remoteLastModifiedBy === 'unknown' ? undefined : remoteLastModifiedBy
+                );
+            },
+        };
+    }
+
+    /**
+     * Upload a local file.
+     * Always hashes freshly-read content to avoid stale hash from planning phase.
+     */
+    private async uploadPath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
+        const file = item.state.localFile;
         if (!(file instanceof TFile)) {
-            throw new Error(`File not found: ${path}`);
+            throw new Error(`File not found: ${item.path}`);
         }
 
-        const content = await this.app.vault.read(file);
-        const hash = await hashContent(content);
-        const key = this.localPathToS3Key(path);
+        const content = await this.readLocalFileContent(file);
+        const contentHash = await hashContent(content);
+        const uploadedAt = Date.now();
 
-        // TODO: Encrypt content if encryption enabled
+        let etag: string;
+        try {
+            etag = await this.s3Provider.uploadFile(this.localPathToS3Key(item.path), content, {
+                ifMatch: item.expectRemoteAbsent ? undefined : item.expectedRemoteEtag,
+                ifNoneMatch: item.expectRemoteAbsent ? '*' : undefined,
+            });
+        } catch (error) {
+            throw this.maybeConvertConditionalWriteError(item.path, error);
+        }
 
-        await this.s3Provider.uploadFile(key, content);
-
-        // Update journal
-        await this.journal.markSynced(path, hash, hash, file.stat.mtime, Date.now());
+        return {
+            path: item.path,
+            action: 'upload',
+            clearPendingPaths: [item.path],
+            requiresManifestCommit: true,
+            manifestEntry: {
+                path: item.path,
+                contentHash,
+                size: file.stat.size,
+                kind: item.state.kind,
+                updatedAt: uploadedAt,
+                lastModifiedBy: this.deviceId,
+                etag,
+            },
+            tombstone: null,
+            applyJournal: async () => {
+                await this.journal.markSynced(
+                    item.path,
+                    contentHash,
+                    contentHash,
+                    file.stat.mtime,
+                    uploadedAt,
+                    etag,
+                    this.deviceId
+                );
+            },
+        };
     }
 
     /**
-     * Download a file from S3
+     * Download a remote file.
+     * Yields to the event loop after writing so Obsidian can flush stat metadata.
      */
-    private async downloadFile(path: string): Promise<void> {
-        const key = this.localPathToS3Key(path);
+    private async downloadPath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
+        const state = item.state;
+        const content = await this.downloadRemoteFileContent(item.path);
+        await this.writeLocalFile(item.path, content);
 
-        // Download content
-        const content = await this.s3Provider.downloadFileAsText(key);
+        // Yield to let Obsidian flush mtime after the write
+        await sleep(0);
 
-        // TODO: Decrypt content if encryption enabled
-
-        // Check if file exists locally
-        const existingFile = this.app.vault.getAbstractFileByPath(path);
-
-        if (existingFile instanceof TFile) {
-            // Modify existing file
-            await this.app.vault.modify(existingFile, content);
-        } else {
-            // Create new file (ensuring parent folders exist)
-            await this.ensureParentFolders(path);
-            await this.app.vault.create(path, content);
-        }
-
-        // Update journal
-        const hash = await hashContent(content);
-        const downloadedFile = this.app.vault.getAbstractFileByPath(path);
+        const remoteHash = state.manifestEntry?.contentHash ?? await this.getRemoteHash(item.path);
+        const remoteEtag = state.remoteObject?.etag ?? state.manifestEntry?.etag;
+        const remoteUpdatedAt = state.manifestEntry?.updatedAt ?? state.remoteObject?.lastModified.getTime() ?? Date.now();
+        const remoteLastModifiedBy = state.manifestEntry?.lastModifiedBy ?? 'unknown';
+        const downloadedFile = this.app.vault.getAbstractFileByPath(item.path);
         if (!(downloadedFile instanceof TFile)) {
-            throw new Error(`Downloaded file not found: ${path}`);
+            throw new Error(`Downloaded file not found: ${item.path}`);
         }
-        await this.journal.markSynced(path, hash, hash, downloadedFile.stat.mtime, Date.now());
+
+        const requiresManifestCommit = state.manifestEntry === undefined || state.tombstone !== undefined;
+        const manifestEntry: RemoteSyncFileEntry | undefined = requiresManifestCommit
+            ? {
+                path: item.path,
+                contentHash: remoteHash,
+                size: state.remoteObject?.size ?? downloadedFile.stat.size,
+                kind: state.kind,
+                updatedAt: remoteUpdatedAt,
+                lastModifiedBy: remoteLastModifiedBy,
+                etag: remoteEtag,
+            }
+            : undefined;
+
+        return {
+            path: item.path,
+            action: 'download',
+            clearPendingPaths: [item.path],
+            requiresManifestCommit,
+            manifestEntry,
+            tombstone: requiresManifestCommit ? null : undefined,
+            applyJournal: async () => {
+                await this.journal.markSynced(
+                    item.path,
+                    remoteHash,
+                    remoteHash,
+                    downloadedFile.stat.mtime,
+                    remoteUpdatedAt,
+                    remoteEtag,
+                    remoteLastModifiedBy === 'unknown' ? undefined : remoteLastModifiedBy
+                );
+            },
+        };
     }
 
     /**
-     * Delete a local file
+     * Delete a local file.
      */
-    private async deleteLocalFile(path: string): Promise<void> {
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof TFile) {
-            await this.app.fileManager.trashFile(file);
+    private async deleteLocalPath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
+        const localFile = item.state.localFile ?? this.app.vault.getAbstractFileByPath(item.path);
+        if (localFile instanceof TFile) {
+            await this.app.fileManager.trashFile(localFile);
         }
-        await this.journal.deleteEntry(path);
+
+        return {
+            path: item.path,
+            action: 'delete-local',
+            clearPendingPaths: [item.path],
+            requiresManifestCommit: false,
+            applyJournal: async () => {
+                await this.journal.deleteEntry(item.path);
+            },
+        };
     }
 
     /**
-     * Delete a remote file
+     * Delete a remote file by tombstoning it in the manifest.
+     *
+     * Physical S3 object deletion is deferred to postCommitCleanup so the
+     * tombstone is committed first, preventing delete/write races where
+     * another device could re-upload before the manifest records the delete.
      */
-    private async deleteRemoteFile(path: string): Promise<void> {
-        const key = this.localPathToS3Key(path);
-        await this.s3Provider.deleteFile(key);
-        await this.journal.deleteEntry(path);
+    private async deleteRemotePath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
+        const key = this.localPathToS3Key(item.path);
+
+        return {
+            path: item.path,
+            action: 'delete-remote',
+            clearPendingPaths: [item.path],
+            requiresManifestCommit: true,
+            manifestEntry: null,
+            tombstone: {
+                path: item.path,
+                deletedAt: Date.now(),
+                deletedBy: this.deviceId,
+                previousHash: item.state.manifestEntry?.contentHash || item.state.journalEntry?.remoteHash || undefined,
+            },
+            applyJournal: async () => {
+                await this.journal.deleteEntry(item.path);
+            },
+            postCommitCleanup: async () => {
+                try {
+                    if (item.state.remoteExists) {
+                        await this.s3Provider.deleteFile(key);
+                    }
+                } catch (error) {
+                    this.log(`Best-effort S3 object deletion failed for ${item.path}: ${String(error)}`);
+                }
+            },
+        };
     }
 
     /**
-     * Handle a conflict by creating LOCAL_ and REMOTE_ versions
+     * Create LOCAL_ and REMOTE_ files for a conflict.
      */
-    private async handleConflict(path: string): Promise<void> {
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (!(file instanceof TFile)) return;
+    private async handleConflict(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
+        const file = item.state.localFile;
+        if (!(file instanceof TFile)) {
+            throw new Error(`Local file missing for conflict: ${item.path}`);
+        }
 
-        // Get file directory and name
-        const dir = path.substring(0, path.lastIndexOf('/'));
-        const fileName = path.substring(path.lastIndexOf('/') + 1);
+        const localContent = await this.readLocalFileContent(file);
+        const remoteContent = await this.downloadRemoteFileContent(item.path);
+        const fileName = item.path.substring(item.path.lastIndexOf('/') + 1);
+        const dir = item.path.includes('/') ? item.path.substring(0, item.path.lastIndexOf('/')) : '';
         const localPath = dir ? `${dir}/LOCAL_${fileName}` : `LOCAL_${fileName}`;
         const remotePath = dir ? `${dir}/REMOTE_${fileName}` : `REMOTE_${fileName}`;
 
-        // Read local content
-        const localContent = await this.app.vault.read(file);
-
-        // Rename local file to LOCAL_
         await this.app.vault.rename(file, localPath);
+        await this.writeLocalFile(remotePath, remoteContent);
 
-        // Download remote as REMOTE_
-        const key = this.localPathToS3Key(path);
-        const remoteContent = await this.s3Provider.downloadFileAsText(key);
-        await this.app.vault.create(remotePath, remoteContent);
-
-        // Update journal to mark as conflict
-        const localHash = await hashContent(localContent);
-        const remoteHash = await hashContent(remoteContent);
-        await this.journal.markConflict(path, localHash, remoteHash);
-
-        // Notify user
-        new Notice(`Conflict detected: ${fileName}\nBoth LOCAL_ and REMOTE_ versions saved.`);
+        return {
+            path: item.path,
+            action: 'conflict',
+            clearPendingPaths: [item.path],
+            requiresManifestCommit: false,
+            applyJournal: async () => {
+                await this.journal.markConflict(
+                    item.path,
+                    item.state.localHash ?? await hashContent(localContent),
+                    item.state.manifestEntry?.contentHash ?? await this.getRemoteHash(item.path),
+                    item.state.remoteObject?.etag ?? item.state.manifestEntry?.etag
+                );
+            },
+        };
     }
 
     /**
-     * Ensure parent folders exist for a path
+     * Commit manifest changes after all successful actions complete.
+     * Returns both the set of committed paths AND any outcomes that
+     * converged with another device during rebase (these need journal
+     * updates even though they weren't re-committed).
+     */
+    private async commitManifestChanges(
+        loadedManifest: LoadedRemoteSyncManifest,
+        outcomes: SyncExecutionOutcome[],
+        errors: SyncError[]
+    ): Promise<{ committedPaths: Set<string>; convergedOutcomes: SyncExecutionOutcome[] }> {
+        const committedPaths = new Set<string>();
+        const allConverged: SyncExecutionOutcome[] = [];
+        let currentManifest = loadedManifest;
+        let applicableOutcomes = outcomes.filter((outcome) => outcome.requiresManifestCommit);
+        const maxCommitAttempts = 10;
+        const syncStartTime = Date.now();
+        const maxSyncAgeMs = 30_000;
+
+        if (applicableOutcomes.length === 0 && loadedManifest.existed) {
+            await this.touchRemoteDevice(loadedManifest.manifest.generation);
+            return { committedPaths, convergedOutcomes: allConverged };
+        }
+
+        for (let attempt = 0; attempt < maxCommitAttempts; attempt++) {
+            try {
+                if (attempt > 0) {
+                    const rebaseResult = this.rebasePendingOutcomes(
+                        applicableOutcomes, currentManifest.manifest
+                    );
+                    applicableOutcomes = rebaseResult.pending;
+                    allConverged.push(...rebaseResult.converged);
+
+                    if (applicableOutcomes.length === 0 && currentManifest.existed) {
+                        await this.touchRemoteDevice(currentManifest.manifest.generation);
+                        return { committedPaths, convergedOutcomes: allConverged };
+                    }
+                }
+
+                const nextManifest = this.buildNextManifest(currentManifest.manifest, applicableOutcomes);
+                const savedEtag = await this.remoteStore.saveManifest(nextManifest, currentManifest.etag);
+                for (const outcome of applicableOutcomes) {
+                    committedPaths.add(outcome.path);
+                }
+                await this.touchRemoteDevice(nextManifest.generation);
+
+                currentManifest = {
+                    manifest: nextManifest,
+                    etag: savedEtag,
+                    existed: true,
+                };
+                return { committedPaths, convergedOutcomes: allConverged };
+            } catch (error) {
+                if (error instanceof RemoteSyncManifestChangedError && attempt < maxCommitAttempts - 1) {
+                    currentManifest = await this.remoteStore.loadManifest();
+
+                    if (Date.now() - syncStartTime > maxSyncAgeMs) {
+                        this.log('Manifest commit exceeded 30s; aborting redrive — next sync will re-plan');
+                        errors.push(this.createSyncError('', 'skip', error, true));
+                        return { committedPaths, convergedOutcomes: allConverged };
+                    }
+
+                    const baseDelayMs = Math.min(100 * Math.pow(2, attempt), 2000);
+                    const jitteredDelayMs = Math.round(baseDelayMs * Math.random());
+                    this.log(`Manifest changed during commit (attempt ${attempt + 1}/${maxCommitAttempts}); retrying in ${jitteredDelayMs}ms`);
+                    await sleep(jitteredDelayMs);
+                    continue;
+                }
+
+                errors.push(this.createSyncError('', 'skip', error, false));
+                return { committedPaths, convergedOutcomes: allConverged };
+            }
+        }
+
+        return { committedPaths, convergedOutcomes: allConverged };
+    }
+
+    /**
+     * Rebase pending outcomes against a freshly-loaded manifest after a 412/409.
+     *
+     * Uses content-hash semantics instead of ETag matching:
+     * - Same contentHash in fresh manifest → converged (journal still needs update)
+     * - Different contentHash in fresh manifest → stale, silently skip (next sync reconciles)
+     * - File not in fresh manifest and we're adding → still pending
+     * - Tombstone already in fresh manifest → converged
+     * - File re-added by another device where we wanted to delete → stale, silently skip
+     */
+    private rebasePendingOutcomes(
+        outcomes: SyncExecutionOutcome[],
+        freshManifest: RemoteSyncManifest
+    ): RebaseResult {
+        const pending: SyncExecutionOutcome[] = [];
+        const converged: SyncExecutionOutcome[] = [];
+
+        for (const outcome of outcomes) {
+            const freshEntry = freshManifest.files[outcome.path];
+            const freshTombstone = freshManifest.tombstones[outcome.path];
+
+            if (outcome.manifestEntry === null) {
+                if (!freshEntry && freshTombstone) {
+                    this.log(`Rebase: ${outcome.path} already tombstoned by another device, skipping`);
+                    converged.push(outcome);
+                    continue;
+                }
+                if (freshEntry) {
+                    this.log(`Rebase: ${outcome.path} was modified by another device during sync; skipping delete — next sync will reconcile`);
+                    continue;
+                }
+                pending.push(outcome);
+                continue;
+            }
+
+            if (outcome.manifestEntry) {
+                if (freshEntry && freshEntry.contentHash === outcome.manifestEntry.contentHash) {
+                    this.log(`Rebase: ${outcome.path} already committed with same content hash, skipping`);
+                    converged.push(outcome);
+                    continue;
+                }
+                if (freshEntry && freshEntry.contentHash !== outcome.manifestEntry.contentHash) {
+                    this.log(`Rebase: ${outcome.path} was modified with different content by another device; skipping — next sync will reconcile`);
+                    continue;
+                }
+                pending.push(outcome);
+                continue;
+            }
+
+            if (outcome.tombstone === null && freshTombstone) {
+                pending.push(outcome);
+            } else if (outcome.tombstone) {
+                if (freshTombstone) {
+                    this.log(`Rebase: ${outcome.path} tombstone already present, skipping`);
+                    converged.push(outcome);
+                    continue;
+                }
+                pending.push(outcome);
+            } else {
+                pending.push(outcome);
+            }
+        }
+
+        return { pending, converged };
+    }
+
+    /**
+     * Build the next manifest snapshot from successful outcomes.
+     */
+    private buildNextManifest(baseManifest: RemoteSyncManifest, outcomes: SyncExecutionOutcome[]): RemoteSyncManifest {
+        const nextManifest = structuredClone(baseManifest);
+        nextManifest.generation += 1;
+        nextManifest.updatedAt = Date.now();
+        nextManifest.updatedBy = this.deviceId;
+
+        for (const outcome of outcomes) {
+            if (outcome.manifestEntry !== undefined) {
+                if (outcome.manifestEntry === null) {
+                    delete nextManifest.files[outcome.path];
+                } else {
+                    nextManifest.files[outcome.path] = outcome.manifestEntry;
+                }
+            }
+
+            if (outcome.tombstone !== undefined) {
+                if (outcome.tombstone === null) {
+                    delete nextManifest.tombstones[outcome.path];
+                } else {
+                    nextManifest.tombstones[outcome.path] = outcome.tombstone;
+                }
+            }
+        }
+
+        return nextManifest;
+    }
+
+    /**
+     * Update this device's remote registry entry.
+     */
+    private async touchRemoteDevice(manifestGeneration: number): Promise<void> {
+        const navigatorAgent = globalThis.navigator?.userAgent || 'Unknown platform';
+        const deviceInfo: RemoteSyncDeviceInfo = {
+            deviceId: this.deviceId,
+            deviceName: navigatorAgent.split(' ')[0] || 'Obsidian',
+            platform: navigatorAgent,
+            lastSeenAt: Date.now(),
+            createdAt: this.deviceCreatedAt,
+            manifestGeneration,
+        };
+
+        try {
+            await this.remoteStore.touchDevice(deviceInfo);
+        } catch (error) {
+            this.log(`Failed to update remote device registry: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    /**
+     * Determine whether local content has changed from the journal baseline.
+     */
+    private hasLocalChanges(state: FileState): boolean {
+        if (!state.localExists) {
+            return false;
+        }
+
+        const journal = state.journalEntry;
+        if (!journal || journal.status === 'new') {
+            return true;
+        }
+
+        return state.localHash !== journal.localHash;
+    }
+
+    /**
+     * Read local file content using the correct Obsidian API.
+     */
+    private async readLocalFileContent(file: TFile): Promise<string | Uint8Array> {
+        return await readVaultFile(this.app.vault, file);
+    }
+
+    /**
+     * Download remote file content with caching.
+     */
+    private async downloadRemoteFileContent(path: string): Promise<string | Uint8Array> {
+        const cached = this.remoteContentCache.get(path);
+        if (cached) {
+            return cached;
+        }
+
+        const key = this.localPathToS3Key(path);
+        const content = getVaultFileKind(path) === 'text'
+            ? await this.s3Provider.downloadFileAsText(key)
+            : await this.s3Provider.downloadFile(key);
+
+        this.remoteContentCache.set(path, content);
+        return content;
+    }
+
+    /**
+     * Hash remote file content with caching.
+     */
+    private async getRemoteHash(path: string): Promise<string> {
+        const cached = this.remoteHashCache.get(path);
+        if (cached) {
+            return cached;
+        }
+
+        const hash = await hashContent(await this.downloadRemoteFileContent(path));
+        this.remoteHashCache.set(path, hash);
+        return hash;
+    }
+
+    /**
+     * Write a file into the local vault.
+     */
+    private async writeLocalFile(path: string, content: string | Uint8Array): Promise<void> {
+        const existingFile = this.app.vault.getAbstractFileByPath(path);
+        if (existingFile instanceof TFile) {
+            if (typeof content === 'string') {
+                await this.app.vault.modify(existingFile, content);
+            } else {
+                await this.app.vault.modifyBinary(existingFile, toArrayBuffer(content));
+            }
+            return;
+        }
+
+        await this.ensureParentFolders(path);
+        if (typeof content === 'string') {
+            await this.app.vault.create(path, content);
+        } else {
+            await this.app.vault.createBinary(path, toArrayBuffer(content));
+        }
+    }
+
+    /**
+     * Ensure parent folders exist for a path.
      */
     private async ensureParentFolders(path: string): Promise<void> {
         const parts = path.split('/');
-        parts.pop(); // Remove filename
-
-        if (parts.length === 0) return;
+        parts.pop();
+        if (parts.length === 0) {
+            return;
+        }
 
         let currentPath = '';
         for (const part of parts) {
             currentPath = currentPath ? `${currentPath}/${part}` : part;
-            const folder = this.app.vault.getAbstractFileByPath(currentPath);
-            if (!folder) {
+            if (!this.app.vault.getAbstractFileByPath(currentPath)) {
                 await this.app.vault.createFolder(currentPath);
             }
         }
     }
 
     /**
-     * Convert local path to S3 key
+     * Compute the remote list prefix.
+     */
+    private getRemoteListPrefix(): string {
+        return this.normalizedSyncPrefix ? `${this.normalizedSyncPrefix}/` : '';
+    }
+
+    /**
+     * Convert a local vault path to an S3 object key.
      */
     private localPathToS3Key(path: string): string {
-        return `${this.settings.syncPrefix}/${path}`;
+        return addPrefix(path, this.normalizedSyncPrefix);
     }
 
     /**
-     * Convert S3 key to local path
+     * Convert a remote object key back to a local path.
      */
     private s3KeyToLocalPath(key: string): string | null {
-        const prefix = `${this.settings.syncPrefix}/`;
-        if (key.startsWith(prefix)) {
-            return key.substring(prefix.length);
-        }
-        return null;
+        return removePrefix(key, this.normalizedSyncPrefix);
     }
 
     /**
-     * Check if a path should be excluded
+     * Check whether a path should be excluded from sync.
      */
     private shouldExclude(path: string): boolean {
-        return this.settings.excludePatterns.some((pattern) => {
-            const regexPattern = pattern
-                .replace(/\./g, '\\.')
-                .replace(/\*\*/g, '.*')
-                .replace(/\*/g, '[^/]*');
-            const regex = new RegExp(`^${regexPattern}$`);
-            return regex.test(path);
-        });
+        return isConflictFile(path) || matchesAnyGlob(path, this.settings.excludePatterns);
     }
 
     /**
-     * Log debug message
+     * Get or create a file state entry.
+     */
+    private getOrCreateState(states: Map<string, FileState>, path: string): FileState {
+        const existing = states.get(path);
+        if (existing) {
+            return existing;
+        }
+
+        const created: FileState = {
+            path,
+            kind: getVaultFileKind(path),
+            localExists: false,
+            remoteExists: false,
+            hasConflictArtifacts: false,
+        };
+        states.set(path, created);
+        return created;
+    }
+
+    /**
+     * Convert any thrown value into a sync error.
+     */
+    private createSyncError(path: string, action: SyncAction, error: unknown, recoverable: boolean): SyncError {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`[S3 Sync] ${action} failed for ${path || '<sync>'}: ${message}`);
+        return {
+            path,
+            action,
+            message,
+            recoverable,
+        };
+    }
+
+    /**
+     * Wrap conditional write errors in a clearer sync-specific message.
+     */
+    private maybeConvertConditionalWriteError(path: string, error: unknown): Error {
+        const err = error as Error & { $metadata?: { httpStatusCode?: number }; name?: string };
+        if (
+            err.$metadata?.httpStatusCode === 409 ||
+            err.$metadata?.httpStatusCode === 412 ||
+            err.name === 'ConditionalRequestConflict' ||
+            err.name === 'PreconditionFailed'
+        ) {
+            return new Error(`Remote file ${path} changed while syncing. Another vault or device may be syncing at the same time. Please sync again.`);
+        }
+
+        return err instanceof Error ? err : new Error('Unknown error');
+    }
+
+    /**
+     * Get or create a string stored in vault-scoped local storage.
+     */
+    private getOrCreateStoredString(key: string, createValue: () => string): string {
+        const existing = this.app.loadLocalStorage(key) as string | null;
+        if (existing) {
+            return existing;
+        }
+
+        const created = createValue();
+        this.app.saveLocalStorage(key, created);
+        return created;
+    }
+
+    /**
+     * Emit a debug log when debug logging is enabled.
      */
     private log(message: string): void {
         if (this.debugLogging) {

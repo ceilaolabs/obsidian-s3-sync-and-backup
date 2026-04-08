@@ -182,48 +182,64 @@ export class SyncJournal {
      * Mark a file as synced
      *
      * @param path - File path
-     * @param localHash - Current local hash
-     * @param remoteHash - Current remote hash (usually same as local after sync)
+     * @param localHash - Current local hash (SHA-256)
+     * @param remoteHash - Current remote hash (SHA-256, usually same as local after sync)
      * @param localMtime - Local modification time
      * @param remoteMtime - Remote modification time
+     * @param remoteEtag - Optional S3 ETag for detecting remote changes
+     * @param lastModifiedBy - Optional device ID that modified this file
      */
     async markSynced(
         path: string,
         localHash: string,
         remoteHash: string,
         localMtime: number,
-        remoteMtime: number
+        remoteMtime: number,
+        remoteEtag?: string,
+        lastModifiedBy?: string
     ): Promise<void> {
         const entry: SyncJournalEntry = {
             path,
             localHash,
             remoteHash,
+            remoteEtag,
             localMtime,
             remoteMtime,
             syncedAt: Date.now(),
             status: 'synced',
+            lastModifiedBy,
         };
         await this.setEntry(entry);
     }
 
     /**
-     * Mark a file as pending (local changes)
+     * Mark a file as pending (local changes).
+     *
+     * Preserves the last synced snapshot from any existing entry so sync can
+     * compare the current local file against the previous baseline.
+     *
+     * New files are stored with status `new` and an empty baseline. This lets
+     * the sync engine treat them as first-time uploads instead of comparing
+     * them against a fake synced state.
      *
      * @param path - File path
-     * @param localHash - New local hash
+     * @param localHash - New local content hash (SHA-256)
      * @param localMtime - New local modification time
      */
     async markPending(path: string, localHash: string, localMtime: number): Promise<void> {
         const existing = await this.getEntry(path);
+        const hasSyncedBaseline = existing !== undefined && existing.syncedAt > 0;
 
         const entry: SyncJournalEntry = {
             path,
             localHash,
-            remoteHash: existing?.remoteHash || '',
+            remoteHash: hasSyncedBaseline ? existing.remoteHash : '',
+            remoteEtag: hasSyncedBaseline ? existing.remoteEtag : undefined,
             localMtime,
-            remoteMtime: existing?.remoteMtime || 0,
-            syncedAt: existing?.syncedAt || 0,
-            status: 'pending',
+            remoteMtime: hasSyncedBaseline ? existing.remoteMtime : 0,
+            syncedAt: hasSyncedBaseline ? existing.syncedAt : 0,
+            status: hasSyncedBaseline ? 'pending' : 'new',
+            lastModifiedBy: hasSyncedBaseline ? existing.lastModifiedBy : undefined,
         };
         await this.setEntry(entry);
     }
@@ -231,27 +247,40 @@ export class SyncJournal {
     /**
      * Mark a file as in conflict
      *
+     * Preserves remoteEtag from existing entry for future conflict resolution.
+     *
      * @param path - File path
      * @param localHash - Local hash
      * @param remoteHash - Remote hash
+     * @param remoteEtag - Optional new remote ETag (if known)
      */
-    async markConflict(path: string, localHash: string, remoteHash: string): Promise<void> {
+    async markConflict(
+        path: string,
+        localHash: string,
+        remoteHash: string,
+        remoteEtag?: string
+    ): Promise<void> {
         const existing = await this.getEntry(path);
 
         const entry: SyncJournalEntry = {
             path,
             localHash,
             remoteHash,
+            // Use provided ETag if available, otherwise preserve existing
+            remoteEtag: remoteEtag ?? existing?.remoteEtag,
             localMtime: existing?.localMtime || Date.now(),
             remoteMtime: existing?.remoteMtime || Date.now(),
             syncedAt: existing?.syncedAt || 0,
             status: 'conflict',
+            lastModifiedBy: existing?.lastModifiedBy, // Preserve device info
         };
         await this.setEntry(entry);
     }
 
     /**
-     * Mark a file as deleted (queued for remote deletion)
+     * Mark a file as deleted (queued for remote deletion).
+     * Creates a minimal tombstone entry when the file has no prior journal record,
+     * ensuring locally-deleted files that exist on the remote are cleaned up.
      *
      * @param path - File path
      */
@@ -261,7 +290,19 @@ export class SyncJournal {
         if (existing) {
             existing.status = 'deleted';
             await this.setEntry(existing);
+            return;
         }
+
+        const tombstone: SyncJournalEntry = {
+            path,
+            localHash: '',
+            remoteHash: '',
+            localMtime: 0,
+            remoteMtime: 0,
+            syncedAt: 0,
+            status: 'deleted',
+        };
+        await this.setEntry(tombstone);
     }
 
     /**

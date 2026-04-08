@@ -6,7 +6,7 @@
 
 import { Plugin } from 'obsidian';
 import { SyncEngine } from './SyncEngine';
-import { S3SyncBackupSettings } from '../types';
+import { S3SyncBackupSettings, SyncResult } from '../types';
 
 /**
  * SyncScheduler class - Manages sync timing
@@ -21,7 +21,7 @@ export class SyncScheduler {
 
     // Callback for status updates
     private onSyncStart?: () => void;
-    private onSyncComplete?: (success: boolean, conflictCount: number) => void;
+    private onSyncComplete?: (result: SyncResult) => void;
     private onSyncError?: (error: string) => void;
 
     constructor(plugin: Plugin, syncEngine: SyncEngine, settings: S3SyncBackupSettings) {
@@ -35,7 +35,7 @@ export class SyncScheduler {
      */
     setCallbacks(callbacks: {
         onSyncStart?: () => void;
-        onSyncComplete?: (success: boolean, conflictCount: number) => void;
+        onSyncComplete?: (result: SyncResult) => void;
         onSyncError?: (error: string) => void;
     }): void {
         this.onSyncStart = callbacks.onSyncStart;
@@ -132,12 +132,12 @@ export class SyncScheduler {
     /**
      * Trigger a sync operation
      */
-    async triggerSync(trigger: 'manual' | 'scheduled' | 'startup'): Promise<void> {
+    async triggerSync(trigger: 'manual' | 'scheduled' | 'startup'): Promise<SyncResult | null> {
         if (this.syncEngine.isInProgress()) {
             if (this.settings.debugLogging) {
                 console.debug('[S3 Sync] Skipping - sync already in progress');
             }
-            return;
+            return null;
         }
 
         if (this.settings.debugLogging) {
@@ -149,15 +149,18 @@ export class SyncScheduler {
         try {
             const result = await this.syncEngine.sync();
 
-            this.onSyncComplete?.(result.success, result.conflicts.length);
+            this.onSyncComplete?.(result);
 
             if (result.errors.length > 0 && this.settings.debugLogging) {
                 console.debug('[S3 Sync] Errors:', result.errors);
             }
+
+            return result;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             this.onSyncError?.(errorMessage);
             console.error('[S3 Sync] Sync failed:', error);
+            return null;
         }
     }
 

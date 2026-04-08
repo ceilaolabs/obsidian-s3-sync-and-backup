@@ -16,9 +16,12 @@ import { SyncJournal } from './sync/SyncJournal';
 import { ChangeTracker } from './sync/ChangeTracker';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
+import { BackupDownloader } from './backup/BackupDownloader';
 import { SnapshotCreator } from './backup/SnapshotCreator';
 import { RetentionManager } from './backup/RetentionManager';
+import { BackupScheduler } from './backup/BackupScheduler';
 import { getOrCreateDeviceId } from './crypto/VaultMarker';
+import { BackupResult } from './types';
 
 /**
  * S3SyncBackupPlugin - Main plugin class
@@ -49,8 +52,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 	/** Backup snapshot creator */
 	private snapshotCreator: SnapshotCreator | null = null;
 
+	/** Backup downloader for zip exports */
+	private backupDownloader: BackupDownloader | null = null;
+
 	/** Backup retention manager */
 	private retentionManager: RetentionManager | null = null;
+
+	/** Backup scheduler for periodic backups */
+	private backupScheduler: BackupScheduler | null = null;
 
 	/** Device ID for backup tracking */
 	private deviceId: string = '';
@@ -76,6 +85,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		// Initialize status bar
 		this.statusBar = new StatusBar(this);
+		this.statusBar.setActionHandler((action) => {
+			if (action === 'sync') {
+				void this.triggerManualSync();
+				return;
+			}
+
+			void this.triggerManualBackup();
+		});
 		this.statusBar.init();
 
 		// Initialize sync journal
@@ -102,14 +119,22 @@ export default class S3SyncBackupPlugin extends Plugin {
 				this.statusBar?.updateSyncState({
 					status: 'syncing',
 					isSyncing: true,
+					lastError: null,
 				});
 			},
-			onSyncComplete: (success, conflictCount) => {
+			onSyncComplete: (result) => {
+				const status = result.errors.length > 0
+					? 'error'
+					: result.conflicts.length > 0
+						? 'conflicts'
+						: 'synced';
+
 				this.statusBar?.updateSyncState({
-					status: conflictCount > 0 ? 'conflicts' : 'synced',
-					lastSyncTime: Date.now(),
+					status,
+					lastSyncTime: result.completedAt,
 					isSyncing: false,
-					conflictCount,
+					conflictCount: result.conflicts.length,
+					lastError: result.errors[0]?.message ?? null,
 				});
 			},
 			onSyncError: (error) => {
@@ -123,7 +148,24 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		// Initialize backup components
 		this.snapshotCreator = new SnapshotCreator(this.app, this.s3Provider, this.settings);
+		this.backupDownloader = new BackupDownloader(this.s3Provider, this.settings);
 		this.retentionManager = new RetentionManager(this.s3Provider, this.settings);
+
+		// Initialize backup scheduler
+		this.backupScheduler = new BackupScheduler(this, this.settings);
+		this.backupScheduler.setCallbacks({
+			onBackupTrigger: async () => {
+				return await this.runBackup();
+			},
+			onBackupComplete: (result) => {
+				this.statusBar?.updateBackupState({
+					status: result?.success ? 'completed' : 'error',
+					lastBackupTime: result?.success ? result.completedAt : null,
+					isRunning: false,
+					lastError: result?.success ? null : (result?.errors[0] ?? 'Backup failed'),
+				});
+			},
+		});
 
 		// Update status bar based on settings
 		this.updateStatusBarFromSettings();
@@ -142,12 +184,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Start sync services if enabled
 		this.startSyncServices();
 
-		// Sync on startup if enabled
+		// Sync on startup if enabled — wait for layout to be ready
 		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
-			// Delay startup sync to let vault fully load
-			setTimeout(() => {
+			this.app.workspace.onLayoutReady(() => {
 				void this.syncScheduler?.triggerSync('startup');
-			}, 3000);
+			});
 		}
 	}
 
@@ -212,8 +253,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 		if (this.snapshotCreator) {
 			this.snapshotCreator.updateSettings(this.settings);
 		}
+		if (this.backupDownloader) {
+			this.backupDownloader.updateSettings(this.settings);
+		}
 		if (this.retentionManager) {
 			this.retentionManager.updateSettings(this.settings);
+		}
+		if (this.backupScheduler) {
+			this.backupScheduler.updateSettings(this.settings);
 		}
 	}
 
@@ -235,24 +282,36 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Update sync status
 		if (this.settings.syncEnabled) {
 			this.statusBar.updateSyncState({
-				status: this.syncScheduler?.getIsPaused() ? 'paused' : 'synced',
+				status: this.syncScheduler?.getIsPaused() ? 'paused' : 'idle',
 				lastSyncTime: null,
+				conflictCount: 0,
+				isSyncing: false,
+				lastError: null,
 			});
 		} else {
 			this.statusBar.updateSyncState({
 				status: 'disabled',
+				lastSyncTime: null,
+				conflictCount: 0,
+				isSyncing: false,
+				lastError: null,
 			});
 		}
 
 		// Update backup status
 		if (this.settings.backupEnabled) {
 			this.statusBar.updateBackupState({
-				status: 'completed',
-				lastBackupTime: null,
+				status: 'idle',
+				lastBackupTime: this.backupScheduler?.getLastBackupTime() ?? null,
+				isRunning: false,
+				lastError: null,
 			});
 		} else {
 			this.statusBar.updateBackupState({
 				status: 'disabled',
+				lastBackupTime: null,
+				isRunning: false,
+				lastError: null,
 			});
 		}
 	}
@@ -270,6 +329,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 				this.syncScheduler?.start();
 			}
 		}
+
+		// Start backup scheduler if backups are enabled
+		if (this.settings.backupEnabled) {
+			void this.backupScheduler?.start();
+		}
 	}
 
 	/**
@@ -278,6 +342,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	private stopSyncServices(): void {
 		this.changeTracker?.stopTracking();
 		this.syncScheduler?.stop();
+		this.backupScheduler?.stop();
 	}
 
 	/**
@@ -367,8 +432,24 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 
 		new Notice('Starting sync...');
-		await this.syncScheduler?.triggerSync('manual');
-		new Notice('Sync completed');
+		const result = await this.syncScheduler?.triggerSync('manual');
+
+		if (!result) {
+			return;
+		}
+
+		const firstError = result.errors[0];
+		if (firstError) {
+			new Notice(`Sync completed with errors: ${firstError.message}`);
+			return;
+		}
+
+		if (result.conflicts.length > 0) {
+			new Notice(`Sync completed with ${result.conflicts.length} conflict(s)`);
+			return;
+		}
+
+		new Notice(`Sync completed: ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted`);
 	}
 
 	/**
@@ -389,14 +470,55 @@ export default class S3SyncBackupPlugin extends Plugin {
 			new Notice('Backup system not initialized');
 			return;
 		}
+		new Notice('Starting backup...');
+
+		try {
+			const result = await this.backupScheduler?.triggerManualBackup() ?? await this.runBackup();
+
+			if (result?.success) {
+				new Notice(`Backup completed: ${result.filesBackedUp} files`);
+				return;
+			}
+
+			const errorMsg = result?.errors[0] ?? 'Unknown error';
+			new Notice(`Backup completed with errors: ${errorMsg}`);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			new Notice(`Backup failed: ${errorMessage}`);
+		}
+	}
+
+	/**
+	 * Run scheduled backup (called by BackupScheduler)
+	 * This is similar to triggerManualBackup but without user notices
+	 */
+	private async runScheduledBackup(): Promise<BackupResult | null> {
+		return await this.runBackup();
+	}
+
+	/**
+	 * Run a backup operation shared by scheduled and manual flows.
+	 */
+	private async runBackup(): Promise<BackupResult | null> {
+		if (this.isBackupRunning) {
+			if (this.settings.debugLogging) {
+				console.debug('[S3 Backup] Skipping scheduled backup - already running');
+			}
+			return null;
+		}
+
+		if (!this.snapshotCreator || !this.s3Provider) {
+			console.error('[S3 Backup] Backup system not initialized');
+			return null;
+		}
 
 		this.isBackupRunning = true;
-		new Notice('Starting backup...');
 
 		// Update status bar
 		this.statusBar?.updateBackupState({
 			status: 'running',
 			isRunning: true,
+			lastError: null,
 		});
 
 		try {
@@ -405,14 +527,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 			const result = await this.snapshotCreator.createSnapshot(this.deviceId, vaultName);
 
 			if (result.success) {
-				new Notice(`Backup completed: ${result.filesBackedUp} files`);
-
-				// Update status bar
-				this.statusBar?.updateBackupState({
-					status: 'completed',
-					lastBackupTime: Date.now(),
-					isRunning: false,
-				});
+				if (this.settings.debugLogging) {
+					console.debug(`[S3 Backup] Scheduled backup completed: ${result.filesBackedUp} files`);
+				}
 
 				// Apply retention policy
 				if (this.settings.retentionEnabled && this.retentionManager) {
@@ -421,25 +538,17 @@ export default class S3SyncBackupPlugin extends Plugin {
 						console.debug(`[S3 Backup] Retention: deleted ${deleted} old backups`);
 					}
 				}
+
+				return result;
 			} else {
 				const errorMsg = result.errors.length > 0 ? result.errors[0] : 'Unknown error';
-				new Notice(`Backup completed with errors: ${errorMsg}`);
-
-				this.statusBar?.updateBackupState({
-					status: 'error',
-					isRunning: false,
-					lastError: errorMsg,
-				});
+				console.error(`[S3 Backup] Scheduled backup failed: ${errorMsg}`);
+				return result;
 			}
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			new Notice(`Backup failed: ${errorMessage}`);
-
-			this.statusBar?.updateBackupState({
-				status: 'error',
-				isRunning: false,
-				lastError: errorMessage,
-			});
+			console.error(`[S3 Backup] Scheduled backup failed: ${errorMessage}`);
+			return null;
 		} finally {
 			this.isBackupRunning = false;
 		}
@@ -462,7 +571,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	private resumeSync(): void {
 		this.syncScheduler?.resume();
 		this.statusBar?.updateSyncState({
-			status: 'synced',
+			status: 'idle',
 		});
 		new Notice('Sync resumed');
 	}

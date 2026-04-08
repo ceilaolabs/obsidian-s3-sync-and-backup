@@ -7,6 +7,30 @@
 
 import { ChangeTracker, PendingChange } from '../../src/sync/ChangeTracker';
 import { SyncJournal } from '../../src/sync/SyncJournal';
+import { TFile } from 'obsidian';
+
+jest.mock('../../src/crypto/Hasher');
+jest.mock('../../src/utils/vaultFiles');
+
+import { hashContent } from '../../src/crypto/Hasher';
+import { readVaultFile } from '../../src/utils/vaultFiles';
+
+class MockTFile extends TFile {
+    constructor(path: string, mtime = Date.now()) {
+        super();
+        this.path = path;
+        this.name = path.split('/').pop() || path;
+
+        const dotIndex = this.name.lastIndexOf('.');
+        this.basename = dotIndex > -1 ? this.name.slice(0, dotIndex) : this.name;
+        this.extension = dotIndex > -1 ? this.name.slice(dotIndex + 1) : '';
+        this.stat = {
+            ctime: mtime,
+            mtime,
+            size: 0,
+        };
+    }
+}
 
 /**
  * Create mock App (Obsidian)
@@ -29,6 +53,15 @@ const createMockJournal = () => ({
 });
 
 describe('ChangeTracker', () => {
+    beforeEach(() => {
+        (readVaultFile as jest.Mock).mockResolvedValue('content');
+        (hashContent as jest.Mock).mockResolvedValue('default-hash');
+    });
+
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
     describe('shouldExclude', () => {
         /**
          * Access private shouldExclude via helper
@@ -259,6 +292,263 @@ describe('ChangeTracker', () => {
 
             // Should only register once
             expect(mockApp.vault.on).toHaveBeenCalledTimes(4); // 4 events
+        });
+    });
+
+    describe('rename handling', () => {
+        it('should keep the old path queued for remote deletion', async () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+            const file = new MockTFile('renamed.md', 123);
+
+            const onFileRename = (tracker as unknown as {
+                onFileRename: (file: TFile, oldPath: string) => Promise<void>;
+            }).onFileRename.bind(tracker);
+
+            await onFileRename(file, 'original.md');
+
+            expect(mockJournal.markDeleted).toHaveBeenCalledWith('original.md');
+            expect(mockJournal.deleteEntry).not.toHaveBeenCalled();
+            expect(mockJournal.markPending).toHaveBeenCalledWith('renamed.md', expect.any(String), 123);
+        });
+    });
+
+    describe('per-file debounce (M5/E2 fix)', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        /**
+         * Verifies that debouncing is independent per file — editing file A
+         * must not cancel or reset file B's debounce timer.
+         */
+        it('debounces journal updates independently per file', () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            const fileA = new MockTFile('notes/a.md', 1000);
+            const fileB = new MockTFile('notes/b.md', 1001);
+
+            const debounceJournalUpdate = (tracker as unknown as {
+                debounceJournalUpdate: (file: TFile) => void;
+            }).debounceJournalUpdate.bind(tracker);
+
+            // Trigger debounce for both files in quick succession
+            debounceJournalUpdate(fileA);
+            debounceJournalUpdate(fileB);
+
+            // Advance past debounce window (300 ms)
+            jest.advanceTimersByTime(400);
+
+            // Both files should have had their journal timer fire
+            // updateJournalForFile calls readVaultFile, so we check that mock
+            expect((readVaultFile as jest.Mock)).toHaveBeenCalledTimes(2);
+        });
+
+        /**
+         * Verifies that stopTracking clears all per-file debounce timers,
+         * leaving the debounceTimers map empty.
+         */
+        it('clears per-file timer on stopTracking', () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            tracker.startTracking([]);
+
+            const fileA = new MockTFile('notes/a.md', 1000);
+
+            const debounceJournalUpdate = (tracker as unknown as {
+                debounceJournalUpdate: (file: TFile) => void;
+            }).debounceJournalUpdate.bind(tracker);
+
+            // Start a debounce timer for fileA
+            debounceJournalUpdate(fileA);
+
+            // Confirm timer exists
+            const timers = (tracker as unknown as {
+                debounceTimers: Map<string, ReturnType<typeof setTimeout>>;
+            }).debounceTimers;
+            expect(timers.size).toBe(1);
+
+            // stopTracking should clear all timers
+            tracker.stopTracking();
+
+            expect(timers.size).toBe(0);
+        });
+    });
+
+    describe('addPendingChange overwrite semantics (E6 fix)', () => {
+        /**
+         * Verifies that a delete event after a modify event on the same path
+         * replaces the modify entry with a delete entry.
+         */
+        it('delete after modify overwrites to delete', () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            const addChange = (tracker as unknown as {
+                addPendingChange: (change: PendingChange) => void;
+            }).addPendingChange.bind(tracker);
+
+            addChange({ path: 'note.md', type: 'modify', timestamp: 1000 });
+            addChange({ path: 'note.md', type: 'delete', timestamp: 1100 });
+
+            const changes = tracker.getPendingChanges();
+            expect(changes).toHaveLength(1);
+            expect(changes[0].type).toBe('delete');
+        });
+
+        /**
+         * Verifies that a rename event after a create event on the same path
+         * replaces the create entry with a rename entry.
+         */
+        it('rename after create overwrites to rename', () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            const addChange = (tracker as unknown as {
+                addPendingChange: (change: PendingChange) => void;
+            }).addPendingChange.bind(tracker);
+
+            addChange({ path: 'note.md', type: 'create', timestamp: 1000 });
+            addChange({ path: 'note.md', type: 'rename', timestamp: 1100, oldPath: 'old.md' });
+
+            const changes = tracker.getPendingChanges();
+            expect(changes).toHaveLength(1);
+            expect(changes[0].type).toBe('rename');
+        });
+
+        /**
+         * Verifies that a modify event after a create event on the same path
+         * keeps exactly one entry whose type is updated to 'modify'.
+         * (Create is treated as an initial "dirty" marker; subsequent modify
+         * updates the type while preserving a single entry.)
+         */
+        it('modify after create preserves single entry with modify type', () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            const addChange = (tracker as unknown as {
+                addPendingChange: (change: PendingChange) => void;
+            }).addPendingChange.bind(tracker);
+
+            addChange({ path: 'note.md', type: 'create', timestamp: 1000 });
+            addChange({ path: 'note.md', type: 'modify', timestamp: 1100 });
+
+            const changes = tracker.getPendingChanges();
+            expect(changes).toHaveLength(1);
+            expect(changes[0].type).toBe('modify');
+        });
+    });
+
+    describe('flushDirtyPaths hash comparison (M4 fix)', () => {
+        /**
+         * Verifies that flushDirtyPaths skips calling journal.markPending when
+         * the freshly-read file hash matches the synced baseline already stored
+         * in the journal. This prevents overwriting a freshly-synced entry.
+         */
+        it('skips journal update when hash matches synced baseline', async () => {
+            const mockFile = new MockTFile('synced.md', 2000);
+
+            const mockApp = {
+                vault: {
+                    on: jest.fn(),
+                    off: jest.fn(),
+                    read: jest.fn().mockResolvedValue('same-content'),
+                    getAbstractFileByPath: jest.fn().mockReturnValue(mockFile),
+                },
+            };
+
+            const mockJournal = {
+                markPending: jest.fn(),
+                markDeleted: jest.fn(),
+                deleteEntry: jest.fn(),
+                getEntry: jest.fn().mockResolvedValue({
+                    status: 'synced',
+                    localHash: 'abc123',
+                }),
+                hasEntry: jest.fn().mockResolvedValue(false),
+            };
+
+            // hashContent returns the same hash as the journal baseline
+            (readVaultFile as jest.Mock).mockResolvedValue('same-content');
+            (hashContent as jest.Mock).mockResolvedValue('abc123');
+
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            // Inject a dirty path directly
+            const dirtySet = (tracker as unknown as {
+                dirtyWhileSyncing: Set<string>;
+            }).dirtyWhileSyncing;
+            dirtySet.add('synced.md');
+
+            const flushDirtyPaths = (tracker as unknown as {
+                flushDirtyPaths: () => Promise<void>;
+            }).flushDirtyPaths.bind(tracker);
+
+            await flushDirtyPaths();
+
+            // Hash matched → journal should NOT be updated
+            expect(mockJournal.markPending).not.toHaveBeenCalled();
+        });
+
+        /**
+         * Verifies that flushDirtyPaths calls journal.markPending when the
+         * freshly-read file hash differs from the synced baseline, meaning the
+         * file truly changed and must be queued for re-upload.
+         */
+        it('marks pending when hash differs from synced baseline', async () => {
+            const mockFile = new MockTFile('changed.md', 3000);
+
+            const mockApp = {
+                vault: {
+                    on: jest.fn(),
+                    off: jest.fn(),
+                    read: jest.fn().mockResolvedValue('new-content'),
+                    getAbstractFileByPath: jest.fn().mockReturnValue(mockFile),
+                },
+            };
+
+            const mockJournal = {
+                markPending: jest.fn(),
+                markDeleted: jest.fn(),
+                deleteEntry: jest.fn(),
+                getEntry: jest.fn().mockResolvedValue({
+                    status: 'synced',
+                    localHash: 'old-hash',
+                }),
+                hasEntry: jest.fn().mockResolvedValue(false),
+            };
+
+            // hashContent returns a DIFFERENT hash from the journal baseline
+            (readVaultFile as jest.Mock).mockResolvedValue('new-content');
+            (hashContent as jest.Mock).mockResolvedValue('new-hash');
+
+            const tracker = new ChangeTracker(mockApp as never, mockJournal as never);
+
+            const dirtySet = (tracker as unknown as {
+                dirtyWhileSyncing: Set<string>;
+            }).dirtyWhileSyncing;
+            dirtySet.add('changed.md');
+
+            const flushDirtyPaths = (tracker as unknown as {
+                flushDirtyPaths: () => Promise<void>;
+            }).flushDirtyPaths.bind(tracker);
+
+            await flushDirtyPaths();
+
+            // Hash differed → journal MUST be updated
+            expect(mockJournal.markPending).toHaveBeenCalledWith('changed.md', 'new-hash', 3000);
         });
     });
 });

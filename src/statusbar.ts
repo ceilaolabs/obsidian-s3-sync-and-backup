@@ -1,115 +1,94 @@
 /**
  * Status Bar Module
  *
- * Provides status bar integration for displaying sync and backup status.
- * Shows current state with icons and relative time since last operation.
+ * Renders compact sync and backup indicators in the Obsidian status bar.
  */
 
-import { Plugin } from 'obsidian';
-import { SyncState, BackupState } from './types';
+import { Plugin, setIcon, setTooltip } from 'obsidian';
+import { BackupState, BackupStatus, SyncState, SyncStatus } from './types';
+import { formatRelativeTime } from './utils/time';
 
 /**
- * Status icons for different states
+ * Intent emitted by a status segment click.
  */
-const SYNC_ICONS: Record<string, string> = {
-    synced: '✓',
-    syncing: '↻',
-    error: '!',
-    conflicts: '⚠',
-    disabled: '○',
-    paused: '⏸',
-};
+export type StatusBarAction = 'sync' | 'backup';
 
-const BACKUP_ICONS: Record<string, string> = {
-    completed: '✓',
-    running: '↻',
-    error: '!',
-    disabled: '○',
-};
-
-/**
- * Format milliseconds into relative time string
- *
- * @param timestamp - Epoch timestamp in milliseconds
- * @returns Relative time string (e.g., "2m ago", "3h ago")
- */
-export function formatRelativeTime(timestamp: number | null): string {
-    if (!timestamp) return '';
-
-    const now = Date.now();
-    const diff = now - timestamp;
-
-    // Less than 1 minute
-    if (diff < 60 * 1000) {
-        return 'just now';
-    }
-
-    // Minutes (1-59)
-    if (diff < 60 * 60 * 1000) {
-        const minutes = Math.floor(diff / (60 * 1000));
-        return `${minutes}m ago`;
-    }
-
-    // Hours (1-23)
-    if (diff < 24 * 60 * 60 * 1000) {
-        const hours = Math.floor(diff / (60 * 60 * 1000));
-        return `${hours}h ago`;
-    }
-
-    // Days (1-6)
-    if (diff < 7 * 24 * 60 * 60 * 1000) {
-        const days = Math.floor(diff / (24 * 60 * 60 * 1000));
-        return `${days}d ago`;
-    }
-
-    // Weeks
-    return '1w+ ago';
+interface StatusIndicatorSpec {
+    icon: string;
+    label: string;
+    emoji: string;
 }
 
+const SYNC_STATUS_SPEC: Record<SyncStatus, StatusIndicatorSpec> = {
+    idle: { icon: 'cloud', label: 'Ready', emoji: '☁️' },
+    synced: { icon: 'check', label: 'Synced', emoji: '✓' },
+    syncing: { icon: 'refresh-cw', label: 'Syncing', emoji: '↻' },
+    error: { icon: 'x', label: 'Error', emoji: '✕' },
+    conflicts: { icon: 'alert-triangle', label: 'Conflict', emoji: '⚠' },
+    disabled: { icon: 'circle-off', label: 'Off', emoji: '○' },
+    paused: { icon: 'pause', label: 'Paused', emoji: '⏸' },
+};
+
+const BACKUP_STATUS_SPEC: Record<BackupStatus, StatusIndicatorSpec> = {
+    idle: { icon: 'archive', label: 'Ready', emoji: '📦' },
+    completed: { icon: 'check', label: 'Done', emoji: '✓' },
+    running: { icon: 'refresh-cw', label: 'Running', emoji: '↻' },
+    error: { icon: 'x', label: 'Error', emoji: '✕' },
+    disabled: { icon: 'circle-off', label: 'Off', emoji: '○' },
+};
+
 /**
- * StatusBar class - Manages status bar display
+ * StatusBar class - manages the bottom bar display.
  */
 export class StatusBar {
-    private plugin: Plugin;
     private statusBarEl: HTMLElement | null = null;
-    private syncState: SyncState;
-    private backupState: BackupState;
+    private syncSegmentEl: HTMLElement | null = null;
+    private backupSegmentEl: HTMLElement | null = null;
+    private syncIconEl: HTMLElement | null = null;
+    private syncTextEl: HTMLElement | null = null;
+    private backupIconEl: HTMLElement | null = null;
+    private backupTextEl: HTMLElement | null = null;
+    private actionHandler?: (action: StatusBarAction) => void;
 
-    constructor(plugin: Plugin) {
-        this.plugin = plugin;
+    private syncState: SyncState = {
+        status: 'disabled',
+        lastSyncTime: null,
+        conflictCount: 0,
+        isSyncing: false,
+        lastError: null,
+    };
 
-        // Initialize with default states
-        this.syncState = {
-            status: 'disabled',
-            lastSyncTime: null,
-            conflictCount: 0,
-            isSyncing: false,
-            lastError: null,
-        };
+    private backupState: BackupState = {
+        status: 'disabled',
+        lastBackupTime: null,
+        isRunning: false,
+        lastError: null,
+    };
 
-        this.backupState = {
-            status: 'disabled',
-            lastBackupTime: null,
-            isRunning: false,
-            lastError: null,
-        };
+    constructor(private plugin: Plugin) {}
+
+    /**
+     * Set the action handler invoked by click interactions.
+     */
+    setActionHandler(handler: (action: StatusBarAction) => void): void {
+        this.actionHandler = handler;
     }
 
     /**
-     * Initialize the status bar element
-     * Call this in plugin's onload()
+     * Initialize the status bar.
      */
     init(): void {
         this.statusBarEl = this.plugin.addStatusBarItem();
         this.statusBarEl.addClass('s3-sync-backup-status');
-        this.update();
+        this.statusBarEl.empty();
 
-        // Add click handlers
-        this.statusBarEl.addEventListener('click', this.handleClick.bind(this));
+        this.syncSegmentEl = this.createSegment('sync');
+        this.backupSegmentEl = this.createSegment('backup');
+        this.update();
     }
 
     /**
-     * Update sync state
+     * Update the sync state.
      */
     updateSyncState(state: Partial<SyncState>): void {
         this.syncState = { ...this.syncState, ...state };
@@ -117,7 +96,7 @@ export class StatusBar {
     }
 
     /**
-     * Update backup state
+     * Update the backup state.
      */
     updateBackupState(state: Partial<BackupState>): void {
         this.backupState = { ...this.backupState, ...state };
@@ -125,121 +104,144 @@ export class StatusBar {
     }
 
     /**
-     * Get sync status text for display
+     * Destroy the status bar.
      */
-    private getSyncStatusText(): string {
-        const icon = SYNC_ICONS[this.syncState.status] || '?';
-
-        switch (this.syncState.status) {
-            case 'synced':
-                return `Sync: ${icon} ${formatRelativeTime(this.syncState.lastSyncTime)}`;
-            case 'syncing':
-                return `Sync: ${icon}`;
-            case 'error':
-                return `Sync: ${icon}`;
-            case 'conflicts':
-                return `Sync: ${icon} ${this.syncState.conflictCount}`;
-            case 'paused':
-                return `Sync: ${icon}`;
-            case 'disabled':
-            default:
-                return `Sync: ${icon}`;
-        }
+    destroy(): void {
+        this.statusBarEl?.remove();
+        this.statusBarEl = null;
+        this.syncSegmentEl = null;
+        this.backupSegmentEl = null;
+        this.syncIconEl = null;
+        this.syncTextEl = null;
+        this.backupIconEl = null;
+        this.backupTextEl = null;
     }
 
     /**
-     * Get backup status text for display
+     * Create a clickable sync or backup segment.
      */
-    private getBackupStatusText(): string {
-        const icon = BACKUP_ICONS[this.backupState.status] || '?';
+    private createSegment(type: StatusBarAction): HTMLElement {
+        const segment = this.statusBarEl!.createDiv({ cls: `s3-sync-backup-segment s3-sync-backup-${type}` });
+        segment.tabIndex = 0;
 
-        switch (this.backupState.status) {
-            case 'completed':
-                return `Backup: ${icon} ${formatRelativeTime(this.backupState.lastBackupTime)}`;
-            case 'running':
-                return `Backup: ${icon}`;
-            case 'error':
-                return `Backup: ${icon}`;
-            case 'disabled':
-            default:
-                return `Backup: ${icon}`;
+        const iconEl = segment.createSpan({ cls: 's3-sync-backup-icon' });
+        const textEl = segment.createSpan({ cls: 's3-sync-backup-text' });
+
+        if (type === 'sync') {
+            this.syncIconEl = iconEl;
+            this.syncTextEl = textEl;
+        } else {
+            this.backupIconEl = iconEl;
+            this.backupTextEl = textEl;
         }
+
+        segment.addEventListener('click', () => {
+            this.actionHandler?.(type);
+        });
+        segment.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                this.actionHandler?.(type);
+            }
+        });
+
+        return segment;
     }
 
     /**
-     * Update status bar display
+     * Render the current states.
      */
     private update(): void {
-        if (!this.statusBarEl) return;
+        if (!this.statusBarEl || !this.syncSegmentEl || !this.backupSegmentEl) {
+            return;
+        }
 
-        const syncText = this.getSyncStatusText();
-        const backupText = this.getBackupStatusText();
-
-        this.statusBarEl.setText(`${syncText} | ${backupText}`);
-
-        // Update tooltip
-        this.statusBarEl.setAttribute('aria-label', this.getTooltipContent());
+        this.renderSync();
+        this.renderBackup();
+        setTooltip(this.statusBarEl, this.getTooltipContent());
     }
 
     /**
-     * Generate tooltip content
+     * Render the sync segment.
+     */
+    private renderSync(): void {
+        if (!this.syncSegmentEl || !this.syncIconEl || !this.syncTextEl) {
+            return;
+        }
+
+        const spec = SYNC_STATUS_SPEC[this.syncState.status];
+        this.syncSegmentEl.className = `s3-sync-backup-segment s3-sync-backup-sync is-${this.syncState.status}`;
+
+        this.renderIcon(this.syncIconEl, spec);
+        const suffix = this.syncState.status === 'conflicts'
+            ? ` ${this.syncState.conflictCount}`
+            : this.syncState.lastSyncTime
+                ? ` ${formatRelativeTime(this.syncState.lastSyncTime)}`
+                : '';
+        this.syncTextEl.setText(`Sync ${spec.label}${suffix}`.trim());
+    }
+
+    /**
+     * Render the backup segment.
+     */
+    private renderBackup(): void {
+        if (!this.backupSegmentEl || !this.backupIconEl || !this.backupTextEl) {
+            return;
+        }
+
+        const spec = BACKUP_STATUS_SPEC[this.backupState.status];
+        this.backupSegmentEl.className = `s3-sync-backup-segment s3-sync-backup-backup is-${this.backupState.status}`;
+
+        this.renderIcon(this.backupIconEl, spec);
+        const suffix = this.backupState.lastBackupTime ? ` ${formatRelativeTime(this.backupState.lastBackupTime)}` : '';
+        this.backupTextEl.setText(`Backup ${spec.label}${suffix}`.trim());
+    }
+
+    /**
+     * Render an icon using Obsidian icons with an emoji fallback.
+     */
+    private renderIcon(target: HTMLElement, spec: StatusIndicatorSpec): void {
+        target.empty();
+        try {
+            setIcon(target, spec.icon);
+        } catch {
+            target.setText(spec.emoji);
+        }
+    }
+
+    /**
+     * Generate tooltip content.
      */
     private getTooltipContent(): string {
-        const lines: string[] = [
-            'S3 Sync & Backup Status',
+        const lines = [
+            'S3 Sync & Backup',
             '',
-            `Sync: ${this.syncState.status}`,
+            `Sync: ${SYNC_STATUS_SPEC[this.syncState.status].label}`,
         ];
 
         if (this.syncState.lastSyncTime) {
-            lines.push(`  Last: ${new Date(this.syncState.lastSyncTime).toLocaleString()}`);
+            lines.push(`Last sync: ${new Date(this.syncState.lastSyncTime).toLocaleString()}`);
         }
-
         if (this.syncState.conflictCount > 0) {
-            lines.push(`  Conflicts: ${this.syncState.conflictCount}`);
+            lines.push(`Conflicts: ${this.syncState.conflictCount}`);
         }
-
         if (this.syncState.lastError) {
-            lines.push(`  Error: ${this.syncState.lastError}`);
+            lines.push(`Sync error: ${this.syncState.lastError}`);
         }
 
         lines.push('');
-        lines.push(`Backup: ${this.backupState.status}`);
-
+        lines.push(`Backup: ${BACKUP_STATUS_SPEC[this.backupState.status].label}`);
         if (this.backupState.lastBackupTime) {
-            lines.push(`  Last: ${new Date(this.backupState.lastBackupTime).toLocaleString()}`);
+            lines.push(`Last backup: ${new Date(this.backupState.lastBackupTime).toLocaleString()}`);
         }
-
         if (this.backupState.lastError) {
-            lines.push(`  Error: ${this.backupState.lastError}`);
+            lines.push(`Backup error: ${this.backupState.lastError}`);
         }
 
         lines.push('');
-        lines.push('Click to sync/backup manually');
+        lines.push('Click Sync to run sync now');
+        lines.push('Click Backup to run backup now');
 
         return lines.join('\n');
-    }
-
-    /**
-     * Handle click on status bar
-     * Left click triggers sync, right click opens context menu
-     */
-    private handleClick(event: MouseEvent): void {
-        // For now, just dispatch a custom event that main.ts can listen to
-        // This will be connected to the actual sync/backup triggers later
-        if (event.button === 0) {
-            // Left click - trigger sync
-            this.statusBarEl?.dispatchEvent(new CustomEvent('s3-sync-trigger'));
-        }
-    }
-
-    /**
-     * Cleanup
-     */
-    destroy(): void {
-        if (this.statusBarEl) {
-            this.statusBarEl.remove();
-            this.statusBarEl = null;
-        }
     }
 }

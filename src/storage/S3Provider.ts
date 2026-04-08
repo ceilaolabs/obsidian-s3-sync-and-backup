@@ -12,6 +12,7 @@ import {
     PutObjectCommand,
     DeleteObjectCommand,
     HeadBucketCommand,
+    HeadObjectCommand,
     DeleteObjectsCommand,
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
@@ -162,15 +163,51 @@ export class S3Provider {
             throw new Error(`Empty response for key: ${key}`);
         }
 
-        // Convert stream to Uint8Array
-        // In browser, Body is a ReadableStream
-        const chunks: Uint8Array[] = [];
-        const reader = (response.Body as ReadableStream<Uint8Array>).getReader();
+        const body = response.Body as
+            | Uint8Array
+            | ArrayBuffer
+            | Blob
+            | ReadableStream<Uint8Array>
+            | { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }
+            | { transformToByteArray?: () => Promise<Uint8Array> }
+            | string;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) chunks.push(value);
+        if (body instanceof Uint8Array) {
+            return body;
+        }
+
+        if (body instanceof ArrayBuffer) {
+            return new Uint8Array(body);
+        }
+
+        if (typeof body === 'string') {
+            return new TextEncoder().encode(body);
+        }
+
+        if (typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray === 'function') {
+            return await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+        }
+
+        if (body instanceof Blob) {
+            return new Uint8Array(await body.arrayBuffer());
+        }
+
+        const chunks: Uint8Array[] = [];
+
+        if (typeof (body as ReadableStream<Uint8Array>).getReader === 'function') {
+            const reader = (body as ReadableStream<Uint8Array>).getReader();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (value) chunks.push(value);
+            }
+        } else if (Symbol.asyncIterator in Object(body)) {
+            for await (const chunk of body as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
+                chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+            }
+        } else {
+            throw new Error(`Unsupported response body type for key: ${key}`);
         }
 
         // Combine chunks into single Uint8Array
@@ -183,6 +220,83 @@ export class S3Provider {
         }
 
         return result;
+    }
+
+    /**
+     * Download file as text along with its ETag in a single request.
+     * Avoids the TOCTOU race of separate HeadObject + GetObject calls.
+     *
+     * @param key - Full S3 key
+     * @returns Object with text content and cleaned ETag, or null if not found
+     */
+    async downloadFileAsTextWithEtag(key: string): Promise<{ text: string; etag: string | null } | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new GetObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+
+            if (!response.Body) {
+                throw new Error(`Empty response for key: ${key}`);
+            }
+
+            const body = response.Body as
+                | Uint8Array
+                | ArrayBuffer
+                | Blob
+                | ReadableStream<Uint8Array>
+                | { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }
+                | { transformToByteArray?: () => Promise<Uint8Array> }
+                | string;
+
+            let bytes: Uint8Array;
+            if (body instanceof Uint8Array) {
+                bytes = body;
+            } else if (body instanceof ArrayBuffer) {
+                bytes = new Uint8Array(body);
+            } else if (typeof body === 'string') {
+                bytes = new TextEncoder().encode(body);
+            } else if (typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray === 'function') {
+                bytes = await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+            } else if (body instanceof Blob) {
+                bytes = new Uint8Array(await body.arrayBuffer());
+            } else {
+                const chunks: Uint8Array[] = [];
+                if (typeof (body as ReadableStream<Uint8Array>).getReader === 'function') {
+                    const reader = (body as ReadableStream<Uint8Array>).getReader();
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        if (value) chunks.push(value);
+                    }
+                } else if (Symbol.asyncIterator in Object(body)) {
+                    for await (const chunk of body as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
+                        chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+                    }
+                } else {
+                    throw new Error(`Unsupported response body type for key: ${key}`);
+                }
+                const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+                bytes = new Uint8Array(totalLength);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    bytes.set(chunk, offset);
+                    offset += chunk.length;
+                }
+            }
+
+            return {
+                text: new TextDecoder().decode(bytes),
+                etag: response.ETag?.replace(/"/g, '') ?? null,
+            };
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
+            }
+            throw error;
+        }
     }
 
     /**
@@ -201,22 +315,52 @@ export class S3Provider {
      *
      * @param key - Full S3 key for destination
      * @param content - File content as Uint8Array or string
-     * @param contentType - Optional MIME type
+     * @param options - Optional content type and conditional headers
+     * @returns The ETag of the uploaded object (for change tracking)
      */
-    async uploadFile(key: string, content: Uint8Array | string, contentType?: string): Promise<void> {
+	async uploadFile(
+		key: string,
+		content: Uint8Array | string,
+		options?: string | { contentType?: string; ifMatch?: string; ifNoneMatch?: string }
+	): Promise<string> {
         const client = this.getClient();
 
         const body = typeof content === 'string'
             ? new TextEncoder().encode(content)
             : content;
 
-        await client.send(new PutObjectCommand({
+        const contentType = typeof options === 'string' ? options : options?.contentType;
+		const ifMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifMatch);
+		const ifNoneMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifNoneMatch);
+
+        const response = await client.send(new PutObjectCommand({
             Bucket: this.settings.bucket,
             Key: key,
             Body: body,
             ContentType: contentType,
+            IfMatch: ifMatch,
+            IfNoneMatch: ifNoneMatch,
         }));
-    }
+
+		// Return cleaned ETag (remove quotes)
+		return response.ETag?.replace(/"/g, '') || '';
+	}
+
+	/**
+	 * Convert a normalized ETag into the quoted HTTP entity-tag form required by
+	 * conditional headers such as `If-Match`.
+	 */
+	private toConditionalEntityTag(etag?: string): string | undefined {
+		if (!etag) {
+			return undefined;
+		}
+
+		if (etag === '*' || etag.startsWith('"') || etag.startsWith('W/"')) {
+			return etag;
+		}
+
+		return `"${etag}"`;
+	}
 
     /**
      * Delete a single file from S3
@@ -274,15 +418,69 @@ export class S3Provider {
     async fileExists(key: string): Promise<boolean> {
         try {
             const client = this.getClient();
-            await client.send(new GetObjectCommand({
+            await client.send(new HeadObjectCommand({
                 Bucket: this.settings.bucket,
                 Key: key,
             }));
             return true;
         } catch (error) {
             const err = error as Error & { name?: string };
-            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound' || err.name === 'NotFound') {
                 return false;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Get the ETag of a file without downloading it
+     *
+     * Used for pre-flight validation before destructive operations.
+     *
+     * @param key - Full S3 key
+     * @returns ETag string (without quotes) or null if file doesn't exist
+     */
+    async getFileEtag(key: string): Promise<string | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new HeadObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+            // Return cleaned ETag (remove quotes)
+            return response.ETag?.replace(/"/g, '') || null;
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Get file metadata (ETag, size, lastModified) without downloading content
+     *
+     * @param key - Full S3 key
+     * @returns Object info or null if file doesn't exist
+     */
+    async getFileMetadata(key: string): Promise<S3ObjectInfo | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new HeadObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+            return {
+                key,
+                size: response.ContentLength || 0,
+                lastModified: response.LastModified || new Date(),
+                etag: response.ETag?.replace(/"/g, ''),
+            };
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
             }
             throw error;
         }
@@ -317,4 +515,8 @@ export class S3Provider {
             this.client = null;
         }
     }
+}
+
+interface AsyncIteratorLike<T> {
+    next(): Promise<IteratorResult<T>>;
 }

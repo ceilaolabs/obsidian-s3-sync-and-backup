@@ -12,6 +12,17 @@ export function normalizePath(path: string): string {
 }
 
 /**
+ * Normalize a user-configured S3 prefix.
+ */
+export function normalizePrefix(prefix: string): string {
+    return normalizePath(prefix)
+        .trim()
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '')
+        .replace(/\/+/g, '/');
+}
+
+/**
  * Get directory part of a path
  */
 export function getDirectory(path: string): string {
@@ -78,9 +89,17 @@ export function matchesAnyGlob(path: string, patterns: string[]): boolean {
  * Add prefix to path
  */
 export function addPrefix(path: string, prefix: string): string {
-    if (!prefix) return path;
-    const normalizedPrefix = normalizePath(prefix).replace(/\/$/, '');
-    const normalizedPath = normalizePath(path).replace(/^\//, '');
+    const normalizedPrefix = normalizePrefix(prefix);
+    const normalizedPath = normalizePath(path).replace(/^\/+/, '');
+
+    if (!normalizedPrefix) {
+        return normalizedPath;
+    }
+
+    if (!normalizedPath) {
+        return normalizedPrefix;
+    }
+
     return `${normalizedPrefix}/${normalizedPath}`;
 }
 
@@ -89,10 +108,20 @@ export function addPrefix(path: string, prefix: string): string {
  */
 export function removePrefix(path: string, prefix: string): string | null {
     const normalizedPath = normalizePath(path);
-    const normalizedPrefix = normalizePath(prefix).replace(/\/$/, '') + '/';
+    const normalizedPrefix = normalizePrefix(prefix);
 
-    if (normalizedPath.startsWith(normalizedPrefix)) {
-        return normalizedPath.substring(normalizedPrefix.length);
+    if (!normalizedPrefix) {
+        return normalizedPath;
+    }
+
+    const prefixWithSlash = `${normalizedPrefix}/`;
+
+    if (normalizedPath === normalizedPrefix) {
+        return '';
+    }
+
+    if (normalizedPath.startsWith(prefixWithSlash)) {
+        return normalizedPath.substring(prefixWithSlash.length);
     }
 
     return null;

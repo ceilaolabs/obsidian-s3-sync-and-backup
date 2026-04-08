@@ -17,6 +17,7 @@ jest.mock('obsidian', () => ({
 }));
 
 import { ConflictHandler } from '../../src/sync/ConflictHandler';
+import { TFile } from 'obsidian';
 
 /**
  * Create mock App (Obsidian)
@@ -38,6 +39,8 @@ const createMockJournal = () => ({
     deleteEntry: jest.fn(),
     getConflictedEntries: jest.fn().mockResolvedValue([]),
 });
+
+class MockTFile extends TFile {}
 
 describe('ConflictHandler', () => {
     describe('generateConflictPaths', () => {
@@ -205,6 +208,36 @@ describe('ConflictHandler', () => {
             await handler.markResolved('test.md');
             expect(handler.getConflictCount()).toBe(0);
         });
+
+        it('should load conflicts from the journal', async () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            mockJournal.getConflictedEntries.mockResolvedValue([
+                { path: 'Notes/doc.md', syncedAt: 1000 },
+                { path: 'image.png', syncedAt: 2000 },
+            ]);
+
+            const handler = new ConflictHandler(mockApp as never, mockJournal as never);
+
+            await handler.loadConflictsFromJournal();
+
+            expect(handler.getActiveConflicts()).toEqual([
+                {
+                    path: 'Notes/doc.md',
+                    localPath: 'Notes/LOCAL_doc.md',
+                    remotePath: 'Notes/REMOTE_doc.md',
+                    detectedAt: 1000,
+                    resolved: false,
+                },
+                {
+                    path: 'image.png',
+                    localPath: 'LOCAL_image.png',
+                    remotePath: 'REMOTE_image.png',
+                    detectedAt: 2000,
+                    resolved: false,
+                },
+            ]);
+        });
     });
 
     describe('handleConflict', () => {
@@ -232,6 +265,48 @@ describe('ConflictHandler', () => {
             // Verify vault operations
             expect(mockApp.vault.create).toHaveBeenCalledWith('Notes/LOCAL_doc.md', 'local version');
             expect(mockApp.vault.create).toHaveBeenCalledWith('Notes/REMOTE_doc.md', 'remote version');
+        });
+
+        it('should rename an existing original file when handling a conflict', async () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const originalFile = new MockTFile();
+            originalFile.path = 'Notes/doc.md';
+            mockApp.vault.getAbstractFileByPath.mockReturnValue(originalFile);
+
+            const handler = new ConflictHandler(mockApp as never, mockJournal as never);
+
+            await handler.handleConflict('Notes/doc.md', 'local version', 'remote version');
+
+            expect(mockApp.vault.rename).toHaveBeenCalledWith(originalFile, 'Notes/LOCAL_doc.md');
+            expect(mockApp.vault.create).toHaveBeenCalledWith('Notes/REMOTE_doc.md', 'remote version');
+            expect(mockApp.vault.create).not.toHaveBeenCalledWith('Notes/LOCAL_doc.md', 'local version');
+        });
+
+        it('should create missing parent folders for nested conflicts', async () => {
+            const mockApp = createMockApp();
+            const mockJournal = createMockJournal();
+            const createdFolders = new Set<string>();
+
+            mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => {
+                if (path === 'Projects/2024/Q1/notes.md') {
+                    return null;
+                }
+
+                return createdFolders.has(path) ? { path } : null;
+            });
+            mockApp.vault.createFolder.mockImplementation(async (path: string) => {
+                createdFolders.add(path);
+                return { path } as never;
+            });
+
+            const handler = new ConflictHandler(mockApp as never, mockJournal as never);
+
+            await handler.handleConflict('Projects/2024/Q1/notes.md', 'local', 'remote');
+
+            expect(mockApp.vault.createFolder).toHaveBeenNthCalledWith(1, 'Projects');
+            expect(mockApp.vault.createFolder).toHaveBeenNthCalledWith(2, 'Projects/2024');
+            expect(mockApp.vault.createFolder).toHaveBeenNthCalledWith(3, 'Projects/2024/Q1');
         });
 
         /**
