@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.3...1.2.0) (2026-04-08)
+
+
+### Features
+
+* add backup downloading and zip export functionality ([61c8776](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/61c8776cf8dff6b1e4015a48dcca47478d959723))
+* enhance S3 sync functionality with improved file tracking and metadata retrieval ([fbf8e92](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/fbf8e92632b7610754eec65a4009cdf682bc72f7))
+* implement backup scheduling and ETag tracking for S3 sync ([eb55251](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/eb5525150701a654e77e5eab9f65bde3d9373785))
+* implement rebasePendingOutcomes logic and add unit tests for SyncEngine ([3f6be85](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/3f6be859b70222f6cf49232df32374e3a09f94fe))
+
+
+### Bug Fixes
+
+* some fixes for sync issues ([58bfc0f](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/58bfc0f996a908f9f67324342e478d7a3b7b27d7))
+* **sync:** resolve 13 bugs in sync engine, change tracker, journal, and S3 provider ([afa072b](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/afa072b0e17ba7f67a68ce3464db4f774dfb494d))
+
 ## [1.1.3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.2...1.1.3) (2025-12-29)
 
 
