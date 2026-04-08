@@ -32,7 +32,12 @@ export class ChangeTracker {
     private journal: SyncJournal;
     private pendingChanges: Map<string, PendingChange> = new Map();
     private excludePatterns: string[] = [];
-    private debounceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    /**
+     * Per-file debounce timers.
+     * Each file gets its own timer so rapid edits to different files
+     * do not cancel each other's journal updates.
+     */
+    private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private debounceMs = 300;
     private isTracking = false;
 
@@ -131,11 +136,11 @@ export class ChangeTracker {
         this.app.vault.off('delete', this.onDeleteHandler);
         this.app.vault.off('rename', this.onRenameHandler);
 
-        // Clear pending timeout
-        if (this.debounceTimeoutId) {
-            clearTimeout(this.debounceTimeoutId);
-            this.debounceTimeoutId = null;
+        // Clear all pending debounce timers
+        for (const timer of this.debounceTimers.values()) {
+            clearTimeout(timer);
         }
+        this.debounceTimers.clear();
     }
 
     /**
@@ -275,15 +280,19 @@ export class ChangeTracker {
     }
 
     /**
-     * Add a pending change, debouncing rapid changes to same file
+     * Add a pending change, debouncing rapid changes to same file.
+     * Delete and rename events always overwrite prior create/modify entries
+     * because the file no longer exists at the original path.
      */
     private addPendingChange(change: PendingChange): void {
-        // For deletes and renames, always record
-        // For create/modify, update existing pending change
         const existing = this.pendingChanges.get(change.path);
 
+        if (change.type === 'delete' || change.type === 'rename') {
+            this.pendingChanges.set(change.path, change);
+            return;
+        }
+
         if (existing && (existing.type === 'create' || existing.type === 'modify')) {
-            // Update timestamp, keep type as modify
             existing.timestamp = change.timestamp;
             if (change.type === 'modify') {
                 existing.type = 'modify';
@@ -294,17 +303,22 @@ export class ChangeTracker {
     }
 
     /**
-     * Debounce journal updates for modified files
+     * Debounce journal updates for modified files.
+     * Uses per-file timers so concurrent edits to different files
+     * each get their journal updated independently.
      */
     private debounceJournalUpdate(file: TFile): void {
-        if (this.debounceTimeoutId) {
-            clearTimeout(this.debounceTimeoutId);
+        const existing = this.debounceTimers.get(file.path);
+        if (existing) {
+            clearTimeout(existing);
         }
 
-        this.debounceTimeoutId = setTimeout(() => {
+        const timer = setTimeout(() => {
+            this.debounceTimers.delete(file.path);
             void this.updateJournalForFile(file);
-            this.debounceTimeoutId = null;
         }, this.debounceMs);
+
+        this.debounceTimers.set(file.path, timer);
     }
 
     /**
@@ -324,6 +338,8 @@ export class ChangeTracker {
 
     /**
      * Re-scan paths that changed while sync was actively mutating them.
+     * Skips journal update when the file hash matches the synced baseline,
+     * which avoids overwriting a freshly synced entry back to 'pending'.
      */
     private async flushDirtyPaths(): Promise<void> {
         const dirtyPaths = Array.from(this.dirtyWhileSyncing.values());
@@ -336,12 +352,24 @@ export class ChangeTracker {
 
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-                this.addPendingChange({
-                    path,
-                    type: 'modify',
-                    timestamp: Date.now(),
-                });
-                await this.updateJournalForFile(file);
+                try {
+                    const content = await readVaultFile(this.app.vault, file);
+                    const hash = await hashContent(content);
+
+                    const journalEntry = await this.journal.getEntry(path);
+                    if (journalEntry?.status === 'synced' && journalEntry.localHash === hash) {
+                        continue;
+                    }
+
+                    this.addPendingChange({
+                        path,
+                        type: 'modify',
+                        timestamp: Date.now(),
+                    });
+                    await this.journal.markPending(path, hash, file.stat.mtime);
+                } catch (error) {
+                    console.error(`Failed to flush dirty path ${path}:`, error);
+                }
                 continue;
             }
 

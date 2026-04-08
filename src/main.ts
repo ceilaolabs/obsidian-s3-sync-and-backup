@@ -184,12 +184,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Start sync services if enabled
 		this.startSyncServices();
 
-		// Sync on startup if enabled
+		// Sync on startup if enabled — wait for layout to be ready
 		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
-			// Delay startup sync to let vault fully load
-			setTimeout(() => {
+			this.app.workspace.onLayoutReady(() => {
 				void this.syncScheduler?.triggerSync('startup');
-			}, 3000);
+			});
 		}
 	}
 

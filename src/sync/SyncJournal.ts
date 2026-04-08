@@ -213,7 +213,7 @@ export class SyncJournal {
     }
 
     /**
-     * Mark a file as pending (local changes)
+     * Mark a file as pending (local changes).
      *
      * Preserves the last synced snapshot from any existing entry so sync can
      * compare the current local file against the previous baseline.
@@ -223,16 +223,16 @@ export class SyncJournal {
      * them against a fake synced state.
      *
      * @param path - File path
-     * @param _localHash - New local hash (used by callers for change detection)
+     * @param localHash - New local content hash (SHA-256)
      * @param localMtime - New local modification time
      */
-    async markPending(path: string, _localHash: string, localMtime: number): Promise<void> {
+    async markPending(path: string, localHash: string, localMtime: number): Promise<void> {
         const existing = await this.getEntry(path);
         const hasSyncedBaseline = existing !== undefined && existing.syncedAt > 0;
 
         const entry: SyncJournalEntry = {
             path,
-            localHash: hasSyncedBaseline ? existing.localHash : '',
+            localHash,
             remoteHash: hasSyncedBaseline ? existing.remoteHash : '',
             remoteEtag: hasSyncedBaseline ? existing.remoteEtag : undefined,
             localMtime,
@@ -278,7 +278,9 @@ export class SyncJournal {
     }
 
     /**
-     * Mark a file as deleted (queued for remote deletion)
+     * Mark a file as deleted (queued for remote deletion).
+     * Creates a minimal tombstone entry when the file has no prior journal record,
+     * ensuring locally-deleted files that exist on the remote are cleaned up.
      *
      * @param path - File path
      */
@@ -288,7 +290,19 @@ export class SyncJournal {
         if (existing) {
             existing.status = 'deleted';
             await this.setEntry(existing);
+            return;
         }
+
+        const tombstone: SyncJournalEntry = {
+            path,
+            localHash: '',
+            remoteHash: '',
+            localMtime: 0,
+            remoteMtime: 0,
+            syncedAt: 0,
+            status: 'deleted',
+        };
+        await this.setEntry(tombstone);
     }
 
     /**

@@ -94,6 +94,16 @@ interface SyncExecutionOutcome {
 }
 
 /**
+ * Result of rebasing pending outcomes against a fresh manifest.
+ * Separates outcomes that still need committing from those that
+ * converged with another device's writes and only need journal updates.
+ */
+interface RebaseResult {
+    pending: SyncExecutionOutcome[];
+    converged: SyncExecutionOutcome[];
+}
+
+/**
  * SyncEngine class - orchestrates sync operations.
  */
 export class SyncEngine {
@@ -198,10 +208,10 @@ export class SyncEngine {
                 }
             }
 
-            const committedManifestPaths = await this.commitManifestChanges(loadedManifest, outcomes, result.errors);
+            const { committedPaths, convergedOutcomes } = await this.commitManifestChanges(loadedManifest, outcomes, result.errors);
 
             for (const outcome of outcomes) {
-                const canApply = !outcome.requiresManifestCommit || committedManifestPaths.has(outcome.path);
+                const canApply = !outcome.requiresManifestCommit || committedPaths.has(outcome.path);
                 if (!canApply) {
                     continue;
                 }
@@ -213,6 +223,13 @@ export class SyncEngine {
 
                 if (outcome.postCommitCleanup) {
                     await outcome.postCommitCleanup();
+                }
+            }
+
+            for (const converged of convergedOutcomes) {
+                await converged.applyJournal();
+                for (const path of converged.clearPendingPaths) {
+                    this.changeTracker.clearPendingChange(path);
                 }
             }
 
@@ -234,10 +251,20 @@ export class SyncEngine {
 
     /**
      * Build the planner state map from local files, remote files, manifest, and journal.
+     * Pre-locks all local file paths via markPathSyncing so vault events during
+     * the async iteration are deferred rather than racing with the state build.
      */
     private async buildFileStateMap(manifest: RemoteSyncManifest): Promise<Map<string, FileState>> {
         const states = new Map<string, FileState>();
         const conflictOriginalPaths = new Set<string>();
+
+        const localFiles = this.app.vault.getFiles().filter(
+            (file) => !isConflictFile(file.path) && !this.shouldExclude(file.path)
+        );
+
+        for (const file of localFiles) {
+            this.changeTracker.markPathSyncing(file.path);
+        }
 
         for (const file of this.app.vault.getFiles()) {
             if (isConflictFile(file.path)) {
@@ -519,6 +546,7 @@ export class SyncEngine {
 
     /**
      * Upload a local file.
+     * Always hashes freshly-read content to avoid stale hash from planning phase.
      */
     private async uploadPath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
         const file = item.state.localFile;
@@ -527,7 +555,7 @@ export class SyncEngine {
         }
 
         const content = await this.readLocalFileContent(file);
-        const contentHash = item.state.localHash ?? await hashContent(content);
+        const contentHash = await hashContent(content);
         const uploadedAt = Date.now();
 
         let etag: string;
@@ -571,11 +599,15 @@ export class SyncEngine {
 
     /**
      * Download a remote file.
+     * Yields to the event loop after writing so Obsidian can flush stat metadata.
      */
     private async downloadPath(item: ExtendedSyncPlanItem): Promise<SyncExecutionOutcome> {
         const state = item.state;
         const content = await this.downloadRemoteFileContent(item.path);
         await this.writeLocalFile(item.path, content);
+
+        // Yield to let Obsidian flush mtime after the write
+        await sleep(0);
 
         const remoteHash = state.manifestEntry?.contentHash ?? await this.getRemoteHash(item.path);
         const remoteEtag = state.remoteObject?.etag ?? state.manifestEntry?.etag;
@@ -714,13 +746,17 @@ export class SyncEngine {
 
     /**
      * Commit manifest changes after all successful actions complete.
+     * Returns both the set of committed paths AND any outcomes that
+     * converged with another device during rebase (these need journal
+     * updates even though they weren't re-committed).
      */
     private async commitManifestChanges(
         loadedManifest: LoadedRemoteSyncManifest,
         outcomes: SyncExecutionOutcome[],
         errors: SyncError[]
-    ): Promise<Set<string>> {
+    ): Promise<{ committedPaths: Set<string>; convergedOutcomes: SyncExecutionOutcome[] }> {
         const committedPaths = new Set<string>();
+        const allConverged: SyncExecutionOutcome[] = [];
         let currentManifest = loadedManifest;
         let applicableOutcomes = outcomes.filter((outcome) => outcome.requiresManifestCommit);
         const maxCommitAttempts = 10;
@@ -729,18 +765,21 @@ export class SyncEngine {
 
         if (applicableOutcomes.length === 0 && loadedManifest.existed) {
             await this.touchRemoteDevice(loadedManifest.manifest.generation);
-            return committedPaths;
+            return { committedPaths, convergedOutcomes: allConverged };
         }
 
         for (let attempt = 0; attempt < maxCommitAttempts; attempt++) {
             try {
                 if (attempt > 0) {
-                    applicableOutcomes = this.rebasePendingOutcomes(
+                    const rebaseResult = this.rebasePendingOutcomes(
                         applicableOutcomes, currentManifest.manifest
                     );
+                    applicableOutcomes = rebaseResult.pending;
+                    allConverged.push(...rebaseResult.converged);
+
                     if (applicableOutcomes.length === 0 && currentManifest.existed) {
                         await this.touchRemoteDevice(currentManifest.manifest.generation);
-                        return committedPaths;
+                        return { committedPaths, convergedOutcomes: allConverged };
                     }
                 }
 
@@ -756,7 +795,7 @@ export class SyncEngine {
                     etag: savedEtag,
                     existed: true,
                 };
-                return committedPaths;
+                return { committedPaths, convergedOutcomes: allConverged };
             } catch (error) {
                 if (error instanceof RemoteSyncManifestChangedError && attempt < maxCommitAttempts - 1) {
                     currentManifest = await this.remoteStore.loadManifest();
@@ -764,7 +803,7 @@ export class SyncEngine {
                     if (Date.now() - syncStartTime > maxSyncAgeMs) {
                         this.log('Manifest commit exceeded 30s; aborting redrive — next sync will re-plan');
                         errors.push(this.createSyncError('', 'skip', error, true));
-                        return committedPaths;
+                        return { committedPaths, convergedOutcomes: allConverged };
                     }
 
                     const baseDelayMs = Math.min(100 * Math.pow(2, attempt), 2000);
@@ -775,84 +814,77 @@ export class SyncEngine {
                 }
 
                 errors.push(this.createSyncError('', 'skip', error, false));
-                return committedPaths;
+                return { committedPaths, convergedOutcomes: allConverged };
             }
         }
 
-        return committedPaths;
+        return { committedPaths, convergedOutcomes: allConverged };
     }
 
     /**
      * Rebase pending outcomes against a freshly-loaded manifest after a 412/409.
      *
      * Uses content-hash semantics instead of ETag matching:
-     * - Same contentHash in fresh manifest → already applied by another device, skip
+     * - Same contentHash in fresh manifest → converged (journal still needs update)
      * - Different contentHash in fresh manifest → stale, silently skip (next sync reconciles)
      * - File not in fresh manifest and we're adding → still pending
-     * - Tombstone already in fresh manifest → already applied, skip
+     * - Tombstone already in fresh manifest → converged
      * - File re-added by another device where we wanted to delete → stale, silently skip
      */
     private rebasePendingOutcomes(
         outcomes: SyncExecutionOutcome[],
         freshManifest: RemoteSyncManifest
-    ): SyncExecutionOutcome[] {
-        const applicable: SyncExecutionOutcome[] = [];
+    ): RebaseResult {
+        const pending: SyncExecutionOutcome[] = [];
+        const converged: SyncExecutionOutcome[] = [];
 
         for (const outcome of outcomes) {
             const freshEntry = freshManifest.files[outcome.path];
             const freshTombstone = freshManifest.tombstones[outcome.path];
 
             if (outcome.manifestEntry === null) {
-                // We wanted to remove this file from the manifest (delete-remote).
                 if (!freshEntry && freshTombstone) {
-                    // Another device already tombstoned it — converged.
                     this.log(`Rebase: ${outcome.path} already tombstoned by another device, skipping`);
+                    converged.push(outcome);
                     continue;
                 }
                 if (freshEntry) {
-                    // Another device re-added or modified the file — stale, next sync resolves.
                     this.log(`Rebase: ${outcome.path} was modified by another device during sync; skipping delete — next sync will reconcile`);
                     continue;
                 }
-                // File not in manifest at all (no entry, no tombstone) — unusual but still apply.
-                applicable.push(outcome);
+                pending.push(outcome);
                 continue;
             }
 
             if (outcome.manifestEntry) {
-                // We wanted to add/update this file in the manifest.
                 if (freshEntry && freshEntry.contentHash === outcome.manifestEntry.contentHash) {
-                    // Same content already committed by another device — converged.
                     this.log(`Rebase: ${outcome.path} already committed with same content hash, skipping`);
+                    converged.push(outcome);
                     continue;
                 }
                 if (freshEntry && freshEntry.contentHash !== outcome.manifestEntry.contentHash) {
-                    // Different content committed by another device — stale, next sync will download or conflict.
                     this.log(`Rebase: ${outcome.path} was modified with different content by another device; skipping — next sync will reconcile`);
                     continue;
                 }
-                // No entry in fresh manifest for this path — still pending.
-                applicable.push(outcome);
+                pending.push(outcome);
                 continue;
             }
 
-            // outcome.manifestEntry is undefined — no manifest mutation intended.
-            // Tombstone-only outcomes or non-manifest outcomes pass through.
             if (outcome.tombstone === null && freshTombstone) {
-                // We wanted to clear a tombstone that's still present — still applicable.
-                applicable.push(outcome);
+                pending.push(outcome);
             } else if (outcome.tombstone) {
                 if (freshTombstone) {
                     this.log(`Rebase: ${outcome.path} tombstone already present, skipping`);
+                    converged.push(outcome);
                     continue;
                 }
-                applicable.push(outcome);
+                pending.push(outcome);
             } else {
-                applicable.push(outcome);
+                pending.push(outcome);
             }
         }
 
-        return applicable;
+        return { pending, converged };
     }
 
     /**

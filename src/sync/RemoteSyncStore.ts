@@ -57,13 +57,14 @@ export class RemoteSyncStore {
     }
 
     /**
-     * Load the current manifest, creating an empty in-memory manifest when none exists.
+     * Load the current manifest using a single GetObject call to avoid
+     * the TOCTOU race between separate HeadObject + GetObject requests.
      */
     async loadManifest(): Promise<LoadedRemoteSyncManifest> {
         const manifestKey = this.getManifestKey();
-        const metadata = await this.s3Provider.getFileMetadata(manifestKey);
+        const result = await this.s3Provider.downloadFileAsTextWithEtag(manifestKey);
 
-        if (!metadata) {
+        if (!result) {
             return {
                 manifest: this.createEmptyManifest(),
                 etag: null,
@@ -71,12 +72,11 @@ export class RemoteSyncStore {
             };
         }
 
-        const manifestJson = await this.s3Provider.downloadFileAsText(manifestKey);
-        const parsed = JSON.parse(manifestJson) as Partial<RemoteSyncManifest>;
+        const parsed = JSON.parse(result.text) as Partial<RemoteSyncManifest>;
 
         return {
             manifest: this.normalizeManifest(parsed),
-            etag: metadata.etag ?? null,
+            etag: result.etag,
             existed: true,
         };
     }
