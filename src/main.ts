@@ -14,6 +14,8 @@ import { StatusBar } from './statusbar';
 import { S3Provider } from './storage/S3Provider';
 import { SyncJournal } from './sync/SyncJournal';
 import { ChangeTracker } from './sync/ChangeTracker';
+import { SyncPathCodec } from './sync/SyncPathCodec';
+import { SyncPayloadCodec } from './sync/SyncPayloadCodec';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { BackupDownloader } from './backup/BackupDownloader';
@@ -24,7 +26,7 @@ import { getOrCreateDeviceId } from './crypto/VaultMarker';
 import { BackupResult } from './types';
 
 /**
- * S3SyncBackupPlugin - Main plugin class
+ * S3SyncBackupPlugin — main plugin class.
  *
  * Manages plugin lifecycle, settings, and orchestrates sync/backup operations.
  */
@@ -42,6 +44,12 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 	/** Change tracker for vault events */
 	private changeTracker: ChangeTracker | null = null;
+
+	/** Path encoder/decoder for S3 key conversion */
+	private pathCodec: SyncPathCodec | null = null;
+
+	/** Payload encoder/decoder for encryption layer */
+	private payloadCodec: SyncPayloadCodec | null = null;
 
 	/** Sync engine for sync operations */
 	private syncEngine: SyncEngine | null = null;
@@ -61,28 +69,27 @@ export default class S3SyncBackupPlugin extends Plugin {
 	/** Backup scheduler for periodic backups */
 	private backupScheduler: BackupScheduler | null = null;
 
-	/** Device ID for backup tracking */
+	/** Device ID for sync and backup tracking */
 	private deviceId: string = '';
 
 	/** Backup in progress flag */
 	private isBackupRunning = false;
 
 	/**
-	 * Plugin load lifecycle hook
-	 * Called when the plugin is enabled
+	 * Plugin load lifecycle hook.
+	 * Called when the plugin is enabled.
 	 */
 	async onload(): Promise<void> {
 		console.debug('Loading S3 Sync & Backup plugin');
 
-		// Load settings
 		await this.loadSettings();
 
 		this.deviceId = getOrCreateDeviceId(this.app);
 
-		// Initialize S3 provider
+		// S3 provider
 		this.s3Provider = new S3Provider(this.settings);
 
-		// Initialize status bar
+		// Status bar
 		this.statusBar = new StatusBar(this);
 		this.statusBar.setActionHandler((action) => {
 			if (action === 'sync') {
@@ -94,25 +101,33 @@ export default class S3SyncBackupPlugin extends Plugin {
 		});
 		this.statusBar.init();
 
-		// Initialize sync journal
+		// Sync journal (v2 — IndexedDB with stateRecords, conflicts, metadata stores)
 		const vaultName = this.app.vault.getName();
 		this.syncJournal = new SyncJournal(vaultName);
 		await this.syncJournal.initialize();
 
-		// Initialize change tracker
-		this.changeTracker = new ChangeTracker(this.app, this.syncJournal);
+		// Path codec
+		this.pathCodec = new SyncPathCodec(this.settings.syncPrefix);
 
-		// Initialize sync engine
+		// Payload codec (encryption key is null until the user provides a passphrase)
+		this.payloadCodec = new SyncPayloadCodec(null);
+
+		// Change tracker (v2 — dirty-path hints only, no journal coupling)
+		this.changeTracker = new ChangeTracker(this.app);
+
+		// Sync engine (v2 — thin orchestrator: planner → executor)
 		this.syncEngine = new SyncEngine(
 			this.app,
 			this.s3Provider,
 			this.syncJournal,
+			this.pathCodec,
+			this.payloadCodec,
 			this.changeTracker,
 			this.settings,
-			this.deviceId
+			this.deviceId,
 		);
 
-		// Initialize sync scheduler
+		// Sync scheduler
 		this.syncScheduler = new SyncScheduler(this, this.syncEngine, this.settings);
 		this.syncScheduler.setCallbacks({
 			onSyncStart: () => {
@@ -146,12 +161,12 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
-		// Initialize backup components
+		// Backup components
 		this.snapshotCreator = new SnapshotCreator(this.app, this.s3Provider, this.settings);
 		this.backupDownloader = new BackupDownloader(this.s3Provider, this.settings);
 		this.retentionManager = new RetentionManager(this.s3Provider, this.settings);
 
-		// Initialize backup scheduler
+		// Backup scheduler
 		this.backupScheduler = new BackupScheduler(this, this.settings);
 		this.backupScheduler.setCallbacks({
 			onBackupTrigger: async () => {
@@ -167,24 +182,23 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
-		// Update status bar based on settings
 		this.updateStatusBarFromSettings();
 
-		// Register settings tab
+		// Settings tab
 		this.addSettingTab(new S3SyncBackupSettingTab(this.app, this));
 
-		// Add ribbon icon for manual sync
+		// Ribbon icon
 		this.addRibbonIcon('refresh-cw', 'Sync with S3', async () => {
 			await this.triggerManualSync();
 		});
 
-		// Register commands
+		// Commands
 		this.registerCommands();
 
 		// Start sync services if enabled
 		this.startSyncServices();
 
-		// Sync on startup if enabled — wait for layout to be ready
+		// Sync on startup — wait for layout to be ready
 		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
 			this.app.workspace.onLayoutReady(() => {
 				void this.syncScheduler?.triggerSync('startup');
@@ -193,28 +207,24 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Plugin unload lifecycle hook
-	 * Called when the plugin is disabled
+	 * Plugin unload lifecycle hook.
+	 * Called when the plugin is disabled.
 	 */
 	onunload(): void {
 		console.debug('Unloading S3 Sync & Backup plugin');
 
-		// Stop sync services
 		this.stopSyncServices();
 
-		// Close sync journal
 		if (this.syncJournal) {
 			this.syncJournal.close();
 			this.syncJournal = null;
 		}
 
-		// Destroy S3 provider
 		if (this.s3Provider) {
 			this.s3Provider.destroy();
 			this.s3Provider = null;
 		}
 
-		// Cleanup status bar
 		if (this.statusBar) {
 			this.statusBar.destroy();
 			this.statusBar = null;
@@ -222,34 +232,34 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Load plugin settings from disk
+	 * Load plugin settings from disk.
 	 */
 	async loadSettings(): Promise<void> {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<S3SyncBackupSettings> | null);
 	}
 
 	/**
-	 * Save plugin settings to disk
+	 * Save plugin settings to disk and propagate to all subsystems.
 	 */
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 
-		// Update S3 provider with new settings
 		if (this.s3Provider) {
 			this.s3Provider.updateSettings(this.settings);
 		}
 
-		// Update sync engine settings
 		if (this.syncEngine) {
 			this.syncEngine.updateSettings(this.settings);
 		}
 
-		// Update sync scheduler settings
+		if (this.pathCodec) {
+			this.pathCodec.updatePrefix(this.settings.syncPrefix);
+		}
+
 		if (this.syncScheduler) {
 			this.syncScheduler.updateSettings(this.settings);
 		}
 
-		// Update backup components
 		if (this.snapshotCreator) {
 			this.snapshotCreator.updateSettings(this.settings);
 		}
@@ -265,8 +275,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Called when settings are changed
-	 * Updates sync services and status bar
+	 * Called when settings are changed via the settings tab.
 	 */
 	onSettingsChanged(): void {
 		this.updateStatusBarFromSettings();
@@ -274,12 +283,18 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Update status bar based on current settings
+	 * Update the encryption key used by the payload codec.
+	 * Called when the user provides or changes their passphrase.
+	 *
+	 * @param key - Derived encryption key, or null to disable encryption.
 	 */
+	updateEncryptionKey(key: Uint8Array | null): void {
+		this.payloadCodec?.updateKey(key);
+	}
+
 	private updateStatusBarFromSettings(): void {
 		if (!this.statusBar) return;
 
-		// Update sync status
 		if (this.settings.syncEnabled) {
 			this.statusBar.updateSyncState({
 				status: this.syncScheduler?.getIsPaused() ? 'paused' : 'idle',
@@ -298,7 +313,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 			});
 		}
 
-		// Update backup status
 		if (this.settings.backupEnabled) {
 			this.statusBar.updateBackupState({
 				status: 'idle',
@@ -316,48 +330,32 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
-	/**
-	 * Start sync services
-	 */
 	private startSyncServices(): void {
 		if (this.settings.syncEnabled) {
-			// Start change tracking
 			this.changeTracker?.startTracking(this.settings.excludePatterns);
 
-			// Start sync scheduler
 			if (this.settings.autoSyncEnabled) {
 				this.syncScheduler?.start();
 			}
 		}
 
-		// Start backup scheduler if backups are enabled
 		if (this.settings.backupEnabled) {
 			void this.backupScheduler?.start();
 		}
 	}
 
-	/**
-	 * Stop sync services
-	 */
 	private stopSyncServices(): void {
 		this.changeTracker?.stopTracking();
 		this.syncScheduler?.stop();
 		this.backupScheduler?.stop();
 	}
 
-	/**
-	 * Restart sync services (after settings change)
-	 */
 	private restartSyncServices(): void {
 		this.stopSyncServices();
 		this.startSyncServices();
 	}
 
-	/**
-	 * Register command palette commands
-	 */
 	private registerCommands(): void {
-		// Sync now command
 		this.addCommand({
 			id: 'sync-now',
 			name: 'Sync now',
@@ -366,7 +364,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
-		// Backup now command
 		this.addCommand({
 			id: 'backup-now',
 			name: 'Backup now',
@@ -375,7 +372,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
-		// Pause sync command
 		this.addCommand({
 			id: 'pause-sync',
 			name: 'Pause sync',
@@ -390,7 +386,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
-		// Resume sync command
 		this.addCommand({
 			id: 'resume-sync',
 			name: 'Resume sync',
@@ -405,12 +400,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
-		// Open settings command
 		this.addCommand({
 			id: 'open-settings',
 			name: 'Open settings',
 			callback: () => {
-				// Navigate to plugin settings
 				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
 				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('s3-sync-and-backup');
 			},
@@ -418,7 +411,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Trigger manual sync with user feedback
+	 * Trigger manual sync with user feedback via Notice.
 	 */
 	async triggerManualSync(): Promise<void> {
 		if (!this.settings.syncEnabled) {
@@ -453,7 +446,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Trigger manual backup with user feedback
+	 * Trigger manual backup with user feedback via Notice.
 	 */
 	async triggerManualBackup(): Promise<void> {
 		if (!this.settings.backupEnabled) {
@@ -488,17 +481,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
-	/**
-	 * Run scheduled backup (called by BackupScheduler)
-	 * This is similar to triggerManualBackup but without user notices
-	 */
-	private async runScheduledBackup(): Promise<BackupResult | null> {
-		return await this.runBackup();
-	}
-
-	/**
-	 * Run a backup operation shared by scheduled and manual flows.
-	 */
 	private async runBackup(): Promise<BackupResult | null> {
 		if (this.isBackupRunning) {
 			if (this.settings.debugLogging) {
@@ -514,7 +496,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		this.isBackupRunning = true;
 
-		// Update status bar
 		this.statusBar?.updateBackupState({
 			status: 'running',
 			isRunning: true,
@@ -522,7 +503,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 		});
 
 		try {
-			// Create backup snapshot
 			const vaultName = this.app.vault.getName();
 			const result = await this.snapshotCreator.createSnapshot(this.deviceId, vaultName);
 
@@ -531,7 +511,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 					console.debug(`[S3 Backup] Scheduled backup completed: ${result.filesBackedUp} files`);
 				}
 
-				// Apply retention policy
 				if (this.settings.retentionEnabled && this.retentionManager) {
 					const deleted = await this.retentionManager.applyRetentionPolicy();
 					if (deleted > 0 && this.settings.debugLogging) {
@@ -554,9 +533,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
-	/**
-	 * Pause automatic sync
-	 */
 	private pauseSync(): void {
 		this.syncScheduler?.pause();
 		this.statusBar?.updateSyncState({
@@ -565,9 +541,6 @@ export default class S3SyncBackupPlugin extends Plugin {
 		new Notice('Sync paused');
 	}
 
-	/**
-	 * Resume automatic sync
-	 */
 	private resumeSync(): void {
 		this.syncScheduler?.resume();
 		this.statusBar?.updateSyncState({
@@ -577,15 +550,15 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Get S3 provider instance
-	 * Used by other modules that need S3 access
+	 * Get S3 provider instance.
+	 * Used by settings tab and other modules that need S3 access.
 	 */
 	getS3Provider(): S3Provider | null {
 		return this.s3Provider;
 	}
 
 	/**
-	 * Get sync journal instance
+	 * Get sync journal instance.
 	 */
 	getSyncJournal(): SyncJournal | null {
 		return this.syncJournal;

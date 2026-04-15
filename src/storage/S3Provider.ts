@@ -16,7 +16,7 @@ import {
     DeleteObjectsCommand,
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
-import { S3SyncBackupSettings, S3ObjectInfo } from '../types';
+import { S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
 import { buildS3ClientConfig, validateConnectionSettings } from './S3Config';
 
 /**
@@ -163,7 +163,48 @@ export class S3Provider {
             throw new Error(`Empty response for key: ${key}`);
         }
 
-        const body = response.Body as
+        return await this.bodyToUint8Array(response.Body, key);
+    }
+
+    /**
+     * Download file content and metadata from S3 in a single request.
+     *
+     * @param key - Full S3 key
+     * @returns Downloaded content with object metadata, or null if not found
+     */
+    async downloadFileWithMetadata(key: string): Promise<S3DownloadResult | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new GetObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+
+            if (!response.Body) {
+                throw new Error(`Empty response for key: ${key}`);
+            }
+
+            const content = await this.bodyToUint8Array(response.Body, key);
+            const metadata = this.toS3HeadResult(response);
+
+            return {
+                content,
+                ...metadata,
+            };
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    private async bodyToUint8Array(
+        body: unknown,
+        key: string
+    ): Promise<Uint8Array> {
+        const responseBody = body as
             | Uint8Array
             | ArrayBuffer
             | Blob
@@ -171,46 +212,49 @@ export class S3Provider {
             | { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }
             | { transformToByteArray?: () => Promise<Uint8Array> }
             | string;
+        type ByteArrayTransformable = { transformToByteArray: () => Promise<Uint8Array> };
 
-        if (body instanceof Uint8Array) {
-            return body;
+        if (responseBody instanceof Uint8Array) {
+            return responseBody;
         }
 
-        if (body instanceof ArrayBuffer) {
-            return new Uint8Array(body);
+        if (responseBody instanceof ArrayBuffer) {
+            return new Uint8Array(responseBody);
         }
 
-        if (typeof body === 'string') {
-            return new TextEncoder().encode(body);
+        if (typeof responseBody === 'string') {
+            return new TextEncoder().encode(responseBody);
         }
 
-        if (typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray === 'function') {
-            return await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+        if (typeof responseBody === 'object' && responseBody !== null && 'transformToByteArray' in responseBody) {
+            const transformableBody = responseBody as ByteArrayTransformable;
+            if (typeof transformableBody.transformToByteArray === 'function') {
+                return await transformableBody.transformToByteArray();
+            }
         }
 
-        if (body instanceof Blob) {
-            return new Uint8Array(await body.arrayBuffer());
+        if (responseBody instanceof Blob) {
+            return new Uint8Array(await responseBody.arrayBuffer());
         }
 
         const chunks: Uint8Array[] = [];
 
-        if (typeof (body as ReadableStream<Uint8Array>).getReader === 'function') {
-            const reader = (body as ReadableStream<Uint8Array>).getReader();
+        if (typeof responseBody === 'object' && responseBody !== null && 'getReader' in responseBody && typeof responseBody.getReader === 'function') {
+            const reader = responseBody.getReader();
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 if (value) chunks.push(value);
             }
-        } else if (Symbol.asyncIterator in Object(body)) {
-            for await (const chunk of body as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
+        } else if (typeof responseBody === 'object' && responseBody !== null && Symbol.asyncIterator in responseBody) {
+            for await (const chunk of responseBody as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
                 chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
             }
         } else {
             throw new Error(`Unsupported response body type for key: ${key}`);
         }
 
-        // Combine chunks into single Uint8Array
         const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
         const result = new Uint8Array(totalLength);
         let offset = 0;
@@ -220,6 +264,58 @@ export class S3Provider {
         }
 
         return result;
+    }
+
+    /**
+     * Get file metadata without downloading content.
+     *
+     * @param key - Full S3 key
+     * @returns Object metadata, or null if file doesn't exist
+     */
+    async headObject(key: string): Promise<S3HeadResult | null> {
+        try {
+            const client = this.getClient();
+            const response = await client.send(new HeadObjectCommand({
+                Bucket: this.settings.bucket,
+                Key: key,
+            }));
+
+            return this.toS3HeadResult(response);
+        } catch (error) {
+            const err = error as Error & { name?: string };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    private toS3HeadResult(response: {
+        ETag?: string;
+        ContentLength?: number;
+        LastModified?: Date;
+        Metadata?: Record<string, string>;
+    }): S3HeadResult {
+        const metadata = response.Metadata ?? {};
+
+        return {
+            etag: response.ETag?.replace(/"/g, '') || '',
+            size: response.ContentLength || 0,
+            lastModified: response.LastModified?.getTime() || 0,
+            syncVersion: this.parseMetadataNumber(metadata['obsidian-sync-version']),
+            fingerprint: metadata['obsidian-fingerprint'],
+            clientMtime: this.parseMetadataNumber(metadata['obsidian-mtime']),
+            deviceId: metadata['obsidian-device-id'],
+        };
+    }
+
+    private parseMetadataNumber(value?: string): number | undefined {
+        if (!value) {
+            return undefined;
+        }
+
+        const parsed = parseInt(value, 10);
+        return Number.isNaN(parsed) ? undefined : parsed;
     }
 
     /**
@@ -241,50 +337,7 @@ export class S3Provider {
                 throw new Error(`Empty response for key: ${key}`);
             }
 
-            const body = response.Body as
-                | Uint8Array
-                | ArrayBuffer
-                | Blob
-                | ReadableStream<Uint8Array>
-                | { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }
-                | { transformToByteArray?: () => Promise<Uint8Array> }
-                | string;
-
-            let bytes: Uint8Array;
-            if (body instanceof Uint8Array) {
-                bytes = body;
-            } else if (body instanceof ArrayBuffer) {
-                bytes = new Uint8Array(body);
-            } else if (typeof body === 'string') {
-                bytes = new TextEncoder().encode(body);
-            } else if (typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray === 'function') {
-                bytes = await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
-            } else if (body instanceof Blob) {
-                bytes = new Uint8Array(await body.arrayBuffer());
-            } else {
-                const chunks: Uint8Array[] = [];
-                if (typeof (body as ReadableStream<Uint8Array>).getReader === 'function') {
-                    const reader = (body as ReadableStream<Uint8Array>).getReader();
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        if (value) chunks.push(value);
-                    }
-                } else if (Symbol.asyncIterator in Object(body)) {
-                    for await (const chunk of body as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
-                        chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
-                    }
-                } else {
-                    throw new Error(`Unsupported response body type for key: ${key}`);
-                }
-                const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-                bytes = new Uint8Array(totalLength);
-                let offset = 0;
-                for (const chunk of chunks) {
-                    bytes.set(chunk, offset);
-                    offset += chunk.length;
-                }
-            }
+            const bytes = await this.bodyToUint8Array(response.Body, key);
 
             return {
                 text: new TextDecoder().decode(bytes),
@@ -321,7 +374,7 @@ export class S3Provider {
 	async uploadFile(
 		key: string,
 		content: Uint8Array | string,
-		options?: string | { contentType?: string; ifMatch?: string; ifNoneMatch?: string }
+		options?: string | { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
 	): Promise<string> {
         const client = this.getClient();
 
@@ -332,6 +385,7 @@ export class S3Provider {
         const contentType = typeof options === 'string' ? options : options?.contentType;
 		const ifMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifMatch);
 		const ifNoneMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifNoneMatch);
+		const metadata = typeof options === 'string' ? undefined : options?.metadata;
 
         const response = await client.send(new PutObjectCommand({
             Bucket: this.settings.bucket,
@@ -340,6 +394,7 @@ export class S3Provider {
             ContentType: contentType,
             IfMatch: ifMatch,
             IfNoneMatch: ifNoneMatch,
+            Metadata: metadata,
         }));
 
 		// Return cleaned ETag (remove quotes)
