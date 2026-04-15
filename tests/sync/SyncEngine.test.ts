@@ -114,6 +114,7 @@ function createEngine(): SyncEngine {
 		saveLocalStorage: jest.fn(),
 		vault: {
 			getFiles: jest.fn().mockReturnValue([]),
+			getName: jest.fn().mockReturnValue('TestVault'),
 		},
 	} as unknown as App;
 
@@ -134,7 +135,8 @@ function createEngine(): SyncEngine {
 		mockS3Provider as never,
 		mockJournal,
 		mockChangeTracker,
-		createSettings()
+		createSettings(),
+		'test-device-id'
 	);
 }
 
