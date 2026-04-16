@@ -1,15 +1,58 @@
 /**
  * Obsidian Request Handler for AWS SDK
  *
- * Custom fetch handler that uses Obsidian's requestUrl API
- * to bypass CORS restrictions in the browser.
+ * Alternative CORS bypass adapter that implements the standard `fetch()`
+ * function signature instead of the Smithy `HttpHandler` interface used by
+ * {@link ObsidianHttpHandler}.
+ *
+ * **Relationship to ObsidianHttpHandler** — Both modules solve the same
+ * problem (CORS restrictions in the Obsidian/Electron runtime) but at
+ * different integration points:
+ * - `ObsidianHttpHandler` hooks into the AWS SDK v3 Smithy middleware stack
+ *   as a first-class `requestHandler`, giving it access to the fully signed
+ *   `HttpRequest` object.
+ * - `ObsidianRequestHandler` exposes `obsidianFetch`, a drop-in replacement
+ *   for the browser's global `fetch()`.  It is kept for compatibility with
+ *   code paths or third-party libraries that accept a `fetch` override rather
+ *   than a Smithy handler.
+ *
+ * **Why `requestUrl`** — Obsidian's `requestUrl` API routes requests through
+ * Electron's main process, which is not subject to browser CORS policy.  This
+ * lets the plugin reach S3-compatible endpoints that do not send the
+ * `Access-Control-Allow-Origin` header.
  */
 
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from 'obsidian';
 
 /**
- * Custom fetch function that uses Obsidian's requestUrl
- * This bypasses CORS restrictions that block browser fetch
+ * Drop-in replacement for the browser's `fetch()` that routes requests
+ * through Obsidian's `requestUrl` to bypass CORS restrictions.
+ *
+ * Accepts all three input forms that the `fetch` spec allows:
+ * - `string` — URL passed directly.
+ * - `URL` — `.href` is extracted.
+ * - `Request` — `.url` is extracted (headers/body in `init` take precedence).
+ *
+ * **Header conversion** — `RequestInit.headers` can be a `Headers` object,
+ * an array of `[key, value]` pairs, or a plain `Record<string, string>`.
+ * All three forms are normalised into a flat `Record<string, string>` because
+ * that is what `RequestUrlParam.headers` requires.
+ *
+ * **Body conversion** — Bodies are forwarded as-is when they are already
+ * `ArrayBuffer` or `string`.  A `Uint8Array` is sliced into a detached
+ * `ArrayBuffer` to avoid sharing the backing buffer.  Any other serializable
+ * type falls back to `JSON.stringify`.
+ *
+ * **Error handling** — HTTP error status codes (4xx/5xx) are returned as
+ * normal `Response` objects (`throw: false`), not thrown exceptions.  Only
+ * network-level failures (DNS errors, connection refused) throw a
+ * `TypeError` matching the `fetch` spec.
+ *
+ * @param input - Request URL as a `string`, `URL`, or `Request` object.
+ * @param init - Standard `RequestInit` options (method, headers, body, etc.).
+ * @returns Standard `Response` object, compatible with the AWS SDK's
+ *   fetch-based deserializers.
+ * @throws {TypeError} On network-level failures (not on HTTP error statuses).
  */
 export async function obsidianFetch(
     input: RequestInfo | URL,
@@ -24,7 +67,10 @@ export async function obsidianFetch(
         url = input.url;
     }
 
-    // Build headers object
+    // Normalise all three supported header formats into a flat Record.
+    // Headers object: iterable key/value pairs.
+    // Array: [[key, value], ...] tuples.
+    // Plain object: Record<string, string> copied via Object.assign.
     const headers: Record<string, string> = {};
     if (init?.headers) {
         if (init.headers instanceof Headers) {
@@ -45,10 +91,19 @@ export async function obsidianFetch(
         url,
         method: (init?.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
         headers,
-        throw: false, // Don't throw on HTTP errors, return them
+        // `throw: false` mirrors the behaviour of the native `fetch()` spec:
+        // HTTP error statuses (4xx/5xx) resolve the promise with a Response
+        // rather than rejecting it.  The AWS SDK checks `response.ok` / the
+        // status code itself to produce typed errors (e.g. NoSuchKey).
+        throw: false,
     };
 
-    // Handle body
+    // Normalise body to the subset of types that requestUrl accepts.
+    // ArrayBuffer and string: forwarded as-is.
+    // Uint8Array: sliced into a detached ArrayBuffer (avoids shared-buffer
+    //   issues if the caller reuses the original buffer after this call).
+    // Other types (FormData, URLSearchParams, etc.): JSON-serialised as a
+    //   best-effort fallback; the AWS SDK never sends non-JSON structured data.
     if (init?.body) {
         if (init.body instanceof ArrayBuffer) {
             requestParams.body = init.body;
@@ -87,7 +142,16 @@ export async function obsidianFetch(
 }
 
 /**
- * Get HTTP status text for a status code
+ * Map an HTTP status code to its standard reason phrase.
+ *
+ * Obsidian's `requestUrl` does not return a `statusText` field, but the
+ * standard `Response` constructor requires one.  This helper provides a
+ * minimal lookup table covering the status codes most commonly returned by
+ * S3-compatible APIs.  Unknown codes return an empty string, which is a
+ * valid (if unhelpful) `statusText` per the `fetch` spec.
+ *
+ * @param status - HTTP status code (e.g. `200`, `403`, `404`).
+ * @returns Canonical reason phrase string, or `""` for unrecognised codes.
  */
 function getStatusText(status: number): string {
     const statusTexts: Record<number, string> = {
