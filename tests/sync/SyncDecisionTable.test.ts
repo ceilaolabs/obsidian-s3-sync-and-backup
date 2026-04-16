@@ -134,6 +134,50 @@ describe('SyncDecisionTable', () => {
 			expectAction(result, 'conflict');
 			expect(result.conflictMode).toBe('both');
 		});
+
+		it('skips L+/R= without baseline (inconsistent state fallthrough)', () => {
+			const result = decide(input({
+				local: 'L+',
+				remote: 'R=',
+				hasBaseline: false,
+				localExists: true,
+				remoteExists: true,
+			}));
+			expectAction(result, 'skip');
+		});
+
+		it('skips L+/RΔ without baseline (inconsistent state fallthrough)', () => {
+			const result = decide(input({
+				local: 'L+',
+				remote: 'RΔ',
+				hasBaseline: false,
+				localExists: true,
+				remoteExists: true,
+			}));
+			expectAction(result, 'skip');
+		});
+
+		it('skips L=/R+ without baseline (inconsistent state fallthrough)', () => {
+			const result = decide(input({
+				local: 'L=',
+				remote: 'R+',
+				hasBaseline: false,
+				localExists: true,
+				remoteExists: true,
+			}));
+			expectAction(result, 'skip');
+		});
+
+		it('skips LΔ/R+ without baseline (inconsistent state fallthrough)', () => {
+			const result = decide(input({
+				local: 'LΔ',
+				remote: 'R+',
+				hasBaseline: false,
+				localExists: true,
+				remoteExists: true,
+			}));
+			expectAction(result, 'skip');
+		});
 	});
 
 	describe('baseline exists — standard three-way', () => {
@@ -177,6 +221,15 @@ describe('SyncDecisionTable', () => {
 				localFingerprint: 'sha256:aaa',
 			}));
 			expectAction(result, 'conflict');
+		});
+
+		it('conflicts LΔ/RΔ when both fingerprints are undefined', () => {
+			const result = decide(input({
+				local: 'LΔ',
+				remote: 'RΔ',
+			}));
+			expectAction(result, 'conflict');
+			expect(result.conflictMode).toBe('both');
 		});
 
 		it('deletes remote L0/R=', () => {
