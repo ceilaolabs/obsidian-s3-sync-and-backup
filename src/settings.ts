@@ -18,6 +18,7 @@ import {
 	BackupInterval,
 	BACKUP_INTERVAL_NAMES,
 	RetentionMode,
+	DEFAULT_SETTINGS,
 } from './types';
 import { S3Provider } from './storage/S3Provider';
 import { normalizePrefix } from './utils/paths';
@@ -55,6 +56,7 @@ const SYNC_INTERVAL_NAMES: Record<SyncIntervalMinutes, string> = {
 export class S3SyncBackupSettingTab extends PluginSettingTab {
 	plugin: S3SyncBackupPlugin;
 	private testConnectionButton: HTMLButtonElement | null = null;
+	private showEncryptionSetup = false;
 
 	/**
 	 * @param app    - The Obsidian application instance.
@@ -417,15 +419,14 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				toggle.setValue(false);
 				toggle.onChange(async (value) => {
 					if (value) {
-						// Show passphrase entry fields by re-rendering
-						this.plugin.settings.encryptionEnabled = true;
+						this.showEncryptionSetup = true;
 						this.display();
 					}
 				});
 			});
 
 		// If the user just toggled ON, show passphrase entry
-		if (this.plugin.settings.encryptionEnabled && state?.remoteMode === 'plaintext') {
+		if (this.showEncryptionSetup && state?.remoteMode === 'plaintext') {
 			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
 				text: 'This passphrase encrypts both synced files and backups. If lost, your data cannot be recovered.',
@@ -474,6 +475,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						);
 
 						if (result?.success) {
+							this.showEncryptionSetup = false;
 							this.plugin.onSettingsChanged();
 							this.display();
 						} else {
@@ -489,8 +491,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				.addButton((button) => {
 					button.setButtonText('Cancel');
 					button.onClick(async () => {
-						this.plugin.settings.encryptionEnabled = false;
-						await this.plugin.saveSettings();
+						this.showEncryptionSetup = false;
 						this.display();
 					});
 				});
@@ -505,6 +506,13 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	private showDisableEncryptionConfirmation(): Promise<boolean> {
 		return new Promise((resolve) => {
 			const modal = new DisableEncryptionModal(this.app, resolve);
+			modal.open();
+		});
+	}
+
+	private showResetConfirmation(): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new ResetSettingsModal(this.app, resolve);
 			modal.open();
 		});
 	}
@@ -767,13 +775,26 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		// Reset to defaults
 		new Setting(containerEl)
 			.setName('Reset to defaults')
-			.setDesc('Reset all settings to their default values')
+			.setDesc('Reset all settings except S3 credentials to their default values')
 			.addButton((button) => {
 				button.setButtonText('Reset');
 				button.setWarning();
 				button.onClick(async () => {
-					// Will implement reset logic
-					new Notice('Reset functionality coming soon');
+					const confirmed = await this.showResetConfirmation();
+					if (!confirmed) return;
+
+					const { provider, endpoint, region, bucket, accessKeyId, secretAccessKey, forcePathStyle } =
+						this.plugin.settings;
+
+					Object.assign(this.plugin.settings, { ...DEFAULT_SETTINGS });
+					Object.assign(this.plugin.settings, {
+						provider, endpoint, region, bucket, accessKeyId, secretAccessKey, forcePathStyle,
+					});
+
+					await this.plugin.saveSettings();
+					this.plugin.onSettingsChanged();
+					this.display();
+					new Notice('Settings reset to defaults (credentials preserved)');
 				});
 			});
 	}
@@ -834,8 +855,50 @@ class DisableEncryptionModal extends Modal {
 
 	onClose(): void {
 		this.contentEl.empty();
-		// If the user closed the modal via Escape or clicking outside,
-		// resolve as cancelled so the caller isn't left hanging.
+		this.resolve(false);
+	}
+}
+
+class ResetSettingsModal extends Modal {
+	private resolve: (value: boolean) => void;
+
+	constructor(app: App, resolve: (value: boolean) => void) {
+		super(app);
+		this.resolve = resolve;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+
+		contentEl.createEl('h2', { text: 'Reset settings?' });
+
+		contentEl.createEl('p', {
+			text:
+				'This will reset all settings to their default values. ' +
+				'Your S3 connection credentials will be preserved.',
+		});
+
+		const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
+
+		buttonContainer
+			.createEl('button', { text: 'Cancel' })
+			.addEventListener('click', () => {
+				this.resolve(false);
+				this.close();
+			});
+
+		const confirmBtn = buttonContainer.createEl('button', {
+			text: 'Reset settings',
+			cls: 'mod-warning',
+		});
+		confirmBtn.addEventListener('click', () => {
+			this.resolve(true);
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 		this.resolve(false);
 	}
 }
