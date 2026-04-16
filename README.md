@@ -7,22 +7,22 @@ Bi-directional vault synchronization and scheduled backups for Obsidian with S3-
 
 ## Features
 
-- **🔄 Bi-directional Sync** — Three-way reconciliation keeps your vault synchronized across devices via S3. Per-file SHA-256 baselines stored locally in IndexedDB detect changes accurately — no cloud manifest required.
-- **☁️ S3-Compatible Storage** — Works with AWS S3, Cloudflare R2, MinIO, and any S3-compatible custom endpoint.
-- **🔐 End-to-End Encryption** — Optional XSalsa20-Poly1305 encryption with Argon2id key derivation. Encrypts both synced files and backup snapshots. Passphrase can be remembered for auto-unlock on startup.
-- **💾 Scheduled Backups** — Full vault snapshot backups with configurable intervals (hourly to weekly). Download any backup as a ZIP from settings.
-- **⚡ Smart Conflict Resolution** — When the same file changes on two devices while offline, the plugin creates `LOCAL_` and `REMOTE_` copies so you never lose data.
-- **📊 Status Bar Integration** — Real-time sync and backup status at a glance, with clickable actions.
-- **🎛️ Flexible Retention** — Automatically clean up old backups by age (days) or number of copies.
-- **🔒 Plugin Settings Protection** — The plugin's own settings directory is hardcoded-excluded from sync to prevent credential or passphrase leakage.
-- **📱 Mobile Support** — Works on iOS and Android. No desktop-only APIs used.
-- **⌨️ Command Palette** — Sync now, Backup now, Pause/Resume sync, and more — all available from the command palette with customizable hotkeys.
+- **Bi-directional Sync** — Three-way reconciliation keeps your vault synchronized across devices via S3. Per-file SHA-256 baselines stored locally in IndexedDB detect changes accurately — no cloud manifest required.
+- **S3-Compatible Storage** — Works with AWS S3, Cloudflare R2, MinIO, and any S3-compatible custom endpoint.
+- **End-to-End Encryption** — Optional XSalsa20-Poly1305 encryption with Argon2id key derivation. Encrypts both synced files and backup snapshots. Passphrase can be remembered for auto-unlock on startup.
+- **Scheduled Backups** — Full vault snapshot backups with configurable intervals (hourly to weekly). Download any backup as a ZIP from settings.
+- **Smart Conflict Resolution** — When the same file changes on two devices while offline, the plugin creates `LOCAL_` and `REMOTE_` copies so you never lose data.
+- **Status Bar Integration** — Real-time sync and backup status at a glance, with clickable actions.
+- **Flexible Retention** — Automatically clean up old backups by age (days) or number of copies.
+- **Plugin Settings Protection** — The plugin's own settings directory is hardcoded-excluded from sync to prevent credential or passphrase leakage.
+- **Mobile Support** — Works on iOS and Android. No desktop-only APIs used.
+- **Command Palette** — Sync now, Backup now, Pause/Resume sync, and more — all available from the command palette with customizable hotkeys.
 
 ---
 
 ## Installation
 
-### From Community Plugins (Coming Soon)
+### From Community Plugins
 1. Open **Settings** → **Community plugins**
 2. Search for "S3 Sync & Backup"
 3. Click **Install** then **Enable**
@@ -146,7 +146,7 @@ All commands are available via the Obsidian command palette (`Ctrl/Cmd + P`) and
 | **S3 Sync & Backup: Backup now** | Trigger an immediate backup snapshot. |
 | **S3 Sync & Backup: Pause sync** | Pause automatic sync (shown only when sync and auto-sync are enabled). |
 | **S3 Sync & Backup: Resume sync** | Resume automatic sync after pausing. |
-| **S3 Sync & Backup: View sync log** | Open the sync log viewer (coming soon). |
+| **S3 Sync & Backup: View sync log** | Open the sync log viewer. |
 | **S3 Sync & Backup: View backups** | Open the plugin settings to the backup section. |
 | **S3 Sync & Backup: Open settings** | Open the plugin settings page. |
 
@@ -201,9 +201,9 @@ your-bucket/
 
 ---
 
-### Built with Engineering Excellence
+### Testing
 
-This plugin is developed with a focus on reliability, security, and code quality. We employ **GitHub Actions** for CI/CD, including automated versioning with `release-please`, mandatory linting, and comprehensive testing suites. With **530+ unit tests** and real-world **integration tests** against Cloudflare R2, every release is verified for stability. Our commitment to best practices ensures your data is handled with the utmost care.
+The plugin includes 565+ automated tests: unit tests covering sync, encryption, backup, and utility modules, pipeline end-to-end tests, and integration tests against live S3 endpoints. CI runs linting, type-checking, and the full test suite on every pull request.
 
 ---
 
@@ -260,4 +260,4 @@ By default, <code>**/workspace*</code> and <code>.trash/**</code> are excluded. 
 
 MIT © [CeilãoLabs](https://github.com/ceilaolabs)
 
-Made with ❤️ for the Obsidian community
+Made for the Obsidian community
