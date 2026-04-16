@@ -86,7 +86,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		this.deviceId = getOrCreateDeviceId(this.app);
 
-		// S3 provider
+		// S3 provider must be created first — all subsystems (sync engine, backup snapshot
+		// creator, etc.) accept it as a constructor argument. Creating it here once ensures
+		// a single authenticated client is reused across the entire plugin lifecycle.
 		this.s3Provider = new S3Provider(this.settings);
 
 		// Status bar
@@ -101,7 +103,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		});
 		this.statusBar.init();
 
-		// Sync journal (v2 — IndexedDB with stateRecords, conflicts, metadata stores)
+		// Sync journal must be initialized (IndexedDB opened) before the sync engine is
+		// constructed, because SyncEngine holds a reference to the open journal instance
+		// and reads/writes baselines immediately on the first sync pass. The await here
+		// ensures the database schema migrations have completed before any sync can run.
+		// (v2 — IndexedDB with stateRecords, conflicts, metadata stores)
 		const vaultName = this.app.vault.getName();
 		this.syncJournal = new SyncJournal(vaultName);
 		await this.syncJournal.initialize();
@@ -198,7 +204,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Start sync services if enabled
 		this.startSyncServices();
 
-		// Sync on startup — wait for layout to be ready
+		// Startup sync is deferred until workspace layout is ready so that Obsidian has
+		// finished restoring open tabs and the vault index is fully populated. Triggering
+		// sync too early (before onLayoutReady) can cause spurious file-not-found errors
+		// because the vault's in-memory file tree may not yet reflect disk reality.
 		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
 			this.app.workspace.onLayoutReady(() => {
 				void this.syncScheduler?.triggerSync('startup');
@@ -292,6 +301,15 @@ export default class S3SyncBackupPlugin extends Plugin {
 		this.payloadCodec?.updateKey(key);
 	}
 
+	/**
+	 * Sync the status bar's display with the current settings state.
+	 *
+	 * Called on initial load and whenever settings change. Sets the sync segment
+	 * to `idle` (or `paused` if currently paused, or `disabled` if sync is off)
+	 * and the backup segment to `idle` (or `disabled` if backup is off).
+	 * Does not alter any "in-progress" states that may have been set by an
+	 * ongoing sync or backup — those are managed by scheduler callbacks.
+	 */
 	private updateStatusBarFromSettings(): void {
 		if (!this.statusBar) return;
 
@@ -330,6 +348,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Start all active sync and backup services based on current settings.
+	 *
+	 * Activates the change tracker (vault file watcher) and the periodic sync
+	 * scheduler if auto-sync is enabled. Starts the backup scheduler if backup
+	 * is enabled. Safe to call after `stopSyncServices()` — calling start on an
+	 * already-running scheduler has no effect.
+	 */
 	private startSyncServices(): void {
 		if (this.settings.syncEnabled) {
 			this.changeTracker?.startTracking(this.settings.excludePatterns);
@@ -344,17 +370,39 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Stop all background sync and backup services.
+	 *
+	 * Halts the change tracker, sync scheduler, and backup scheduler. Does not
+	 * interrupt an in-progress sync or backup operation — those run to completion.
+	 * Called during plugin unload and before settings-driven restarts.
+	 */
 	private stopSyncServices(): void {
 		this.changeTracker?.stopTracking();
 		this.syncScheduler?.stop();
 		this.backupScheduler?.stop();
 	}
 
+	/**
+	 * Restart all sync and backup services.
+	 *
+	 * Convenience wrapper around `stopSyncServices()` + `startSyncServices()`.
+	 * Called when settings change to apply the new configuration (e.g., changed
+	 * sync interval, toggling auto-sync, or enabling/disabling backup).
+	 */
 	private restartSyncServices(): void {
 		this.stopSyncServices();
 		this.startSyncServices();
 	}
 
+	/**
+	 * Register all command palette commands for the plugin.
+	 *
+	 * Commands are registered here rather than in a separate `commands.ts` module
+	 * because they require direct access to private plugin methods (triggerManualSync,
+	 * pauseSync, resumeSync). The `checkCallback` pattern is used for pause/resume so
+	 * Obsidian only shows commands that are currently applicable.
+	 */
 	private registerCommands(): void {
 		this.addCommand({
 			id: 'sync-now',
@@ -481,6 +529,17 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Execute a backup operation: create a vault snapshot, upload to S3, and apply
+	 * retention policy if configured.
+	 *
+	 * Guards against concurrent runs via `isBackupRunning`. Updates the status bar
+	 * to reflect the running/completed states. Returns `null` if already running or
+	 * if the backup system is not fully initialized.
+	 *
+	 * @returns The `BackupResult` on completion (success or failure with errors), or
+	 *   `null` if the backup was skipped due to a concurrent run or missing subsystems.
+	 */
 	private async runBackup(): Promise<BackupResult | null> {
 		if (this.isBackupRunning) {
 			if (this.settings.debugLogging) {
@@ -533,6 +592,13 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Pause automatic sync scheduling and reflect the paused state in the status bar.
+	 *
+	 * The sync scheduler is suspended (no more periodic triggers) but an in-progress
+	 * sync run is allowed to complete. Manual sync via `triggerManualSync()` remains
+	 * available while paused.
+	 */
 	private pauseSync(): void {
 		this.syncScheduler?.pause();
 		this.statusBar?.updateSyncState({
@@ -541,6 +607,13 @@ export default class S3SyncBackupPlugin extends Plugin {
 		new Notice('Sync paused');
 	}
 
+	/**
+	 * Resume automatic sync scheduling after a pause.
+	 *
+	 * Restores the scheduler to active state and resets the status bar to `idle`.
+	 * The next scheduled sync will fire after the configured interval from the
+	 * resume point (not immediately).
+	 */
 	private resumeSync(): void {
 		this.syncScheduler?.resume();
 		this.statusBar?.updateSyncState({
@@ -552,6 +625,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 	/**
 	 * Get S3 provider instance.
 	 * Used by settings tab and other modules that need S3 access.
+	 *
+	 * @returns The active {@link S3Provider}, or `null` if the plugin has not yet
+	 *   loaded or has been unloaded.
 	 */
 	getS3Provider(): S3Provider | null {
 		return this.s3Provider;
@@ -559,6 +635,12 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 	/**
 	 * Get sync journal instance.
+	 *
+	 * Used by modules that need to read or write per-file sync baselines (e.g.,
+	 * settings tab actions such as clearing the journal on bucket change).
+	 *
+	 * @returns The active {@link SyncJournal}, or `null` if the plugin has not yet
+	 *   loaded or has been unloaded.
 	 */
 	getSyncJournal(): SyncJournal | null {
 		return this.syncJournal;

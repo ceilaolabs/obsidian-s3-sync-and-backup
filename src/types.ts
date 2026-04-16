@@ -400,16 +400,27 @@ export interface SyncUploadMetadata {
 // =============================================================================
 
 /**
- * Backup manifest stored with each backup snapshot
+ * Backup manifest stored with each backup snapshot.
+ *
+ * Written as `.backup-manifest.json` inside each backup folder in S3. Used to
+ * display backup metadata in the settings UI and to support restoration workflows.
  */
 export interface BackupManifest {
+	/** Manifest schema version (currently 1). Incremented on breaking changes. */
 	version: number;
+	/** ISO 8601 timestamp when the backup was created (e.g., "2024-12-25T14:30:00.000Z"). */
 	timestamp: string;
+	/** Device ID of the device that created the backup (from {@link VaultMarker}). */
 	deviceId: string;
+	/** Human-readable device name reported by Obsidian at the time of backup. */
 	deviceName: string;
+	/** Number of files included in this backup snapshot. */
 	fileCount: number;
+	/** Total plaintext size of all backed-up files in bytes. */
 	totalSize: number;
+	/** Whether the backup files are encrypted (matches the plugin encryption setting at backup time). */
 	encrypted: boolean;
+	/** Map of relative file path → SHA-256 hex digest for integrity verification. */
 	checksums: Record<string, string>;
 }
 
@@ -430,15 +441,25 @@ export interface BackupInfo {
 }
 
 /**
- * Result of a backup operation
+ * Result of a backup operation.
+ *
+ * Returned by `SnapshotCreator.createSnapshot()` and propagated through
+ * `BackupScheduler` callbacks to update the status bar and user notices.
  */
 export interface BackupResult {
+	/** Whether the backup completed without any errors. */
 	success: boolean;
+	/** The backup folder name in S3 (e.g., `backup-2024-12-25T14-30-00`). */
 	backupName: string;
+	/** Epoch ms timestamp when the backup started. */
 	startedAt: number;
+	/** Epoch ms timestamp when the backup completed. */
 	completedAt: number;
+	/** Number of files successfully uploaded to the backup folder. */
 	filesBackedUp: number;
+	/** Total bytes uploaded across all files in this backup. */
 	totalSize: number;
+	/** List of error messages for any files that failed to back up. */
 	errors: string[];
 }
 
@@ -469,23 +490,40 @@ export type BackupStatus =
 	| 'disabled';   // ○ Backup disabled
 
 /**
- * Runtime state for sync system
+ * Runtime state for the sync system, consumed by the status bar.
+ *
+ * Held by the `StatusBar` instance and updated via partial merges through
+ * `StatusBar.updateSyncState()`. Drives the visual representation of the
+ * sync segment (icon, label, suffix, and tooltip text).
  */
 export interface SyncState {
+	/** Current sync status driving the icon and CSS class. */
 	status: SyncStatus;
+	/** Epoch ms timestamp of the last completed sync, or `null` if never synced. */
 	lastSyncTime: number | null;
+	/** Number of unresolved conflicts from the last sync. */
 	conflictCount: number;
+	/** Whether a sync operation is currently in progress. */
 	isSyncing: boolean;
+	/** Last sync error message, or `null` if the last sync succeeded. */
 	lastError: string | null;
 }
 
 /**
- * Runtime state for backup system
+ * Runtime state for the backup system, consumed by the status bar.
+ *
+ * Held by the `StatusBar` instance and updated via partial merges through
+ * `StatusBar.updateBackupState()`. Drives the visual representation of the
+ * backup segment (icon, label, suffix, and tooltip text).
  */
 export interface BackupState {
+	/** Current backup status driving the icon and CSS class. */
 	status: BackupStatus;
+	/** Epoch ms timestamp of the last completed backup, or `null` if never backed up. */
 	lastBackupTime: number | null;
+	/** Whether a backup operation is currently in progress. */
 	isRunning: boolean;
+	/** Last backup error message, or `null` if the last backup succeeded. */
 	lastError: string | null;
 }
 
@@ -494,23 +532,39 @@ export interface BackupState {
 // =============================================================================
 
 /**
- * S3 object metadata from list operations
+ * S3 object metadata from list operations.
+ *
+ * Returned by `S3Provider.listObjects()`. Used by the sync planner to discover
+ * remote files and by the retention manager to enumerate old backup folders.
  */
 export interface S3ObjectInfo {
+	/** Full S3 object key (e.g., `vault/Notes/my-note.md`). */
 	key: string;
+	/** Object size in bytes as reported by S3. */
 	size: number;
+	/** S3 LastModified timestamp as a `Date` object. */
 	lastModified: Date;
+	/** S3 ETag (may be quoted; strip quotes before comparing). Optional — not always returned. */
 	etag?: string;
 }
 
 /**
- * Device registration for multi-device sync
+ * Device registration for multi-device sync.
+ *
+ * Created by `getOrCreateDeviceId()` in `VaultMarker` and persisted in Obsidian's
+ * plugin data. Used to tag S3 objects with the writing device so the sync engine
+ * can attribute remote changes to specific devices in logs and conflict metadata.
  */
 export interface DeviceInfo {
+	/** Unique, stable identifier for this device (UUID v4 generated on first run). */
 	deviceId: string;
+	/** Human-readable device name (e.g., hostname or Obsidian app name). */
 	deviceName: string;
+	/** Platform string (e.g., `"desktop"`, `"mobile"`). */
 	platform: string;
+	/** Epoch ms timestamp when this device last connected to sync. */
 	lastSeen: number;
+	/** Epoch ms timestamp when this device was first registered. */
 	createdAt: number;
 }
 
@@ -519,17 +573,23 @@ export interface DeviceInfo {
 // =============================================================================
 
 /**
- * Vault encryption marker file structure
- * Stored at {syncPrefix}/.obsidian-s3-sync/vault.enc
+ * Vault encryption marker file structure.
+ *
+ * Stored at `{syncPrefix}/.obsidian-s3-sync/.vault.enc` in S3. Written once when
+ * encryption is first enabled. On subsequent sessions, this file is read to verify
+ * the passphrase (by decrypting `verificationToken`) and to obtain the Argon2id salt
+ * needed to re-derive the encryption key. If the file is missing, the bucket is
+ * treated as unencrypted.
  */
 export interface VaultEncryptionMarker {
+	/** Marker schema version (currently 1). */
 	version: number;
-	/** Random 32-byte salt for Argon2id (base64 encoded) */
+	/** Random 32-byte salt for Argon2id (base64 encoded). Generated once per vault. */
 	salt: string;
-	/** Encrypted verification token to validate passphrase */
+	/** Encrypted verification token to validate the passphrase without storing the key. */
 	verificationToken: string;
-	/** Timestamp when encryption was set up */
+	/** ISO 8601 timestamp when encryption was set up on this vault. */
 	createdAt: string;
-	/** Device ID that created the encryption */
+	/** Device ID of the device that initially enabled encryption. */
 	createdBy: string;
 }

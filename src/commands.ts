@@ -1,14 +1,30 @@
 /**
  * Commands Module
  *
- * Registers all command palette commands for the plugin.
+ * Exports `COMMAND_IDS` constants and the `registerCommands` function for the plugin's
+ * command palette entries.
+ *
+ * **Architecture note:** This module was originally intended as the central command
+ * registry, but the primary command registrations now live in `main.ts` via
+ * `registerCommands()` on the plugin class, because those commands require direct
+ * access to private plugin methods (e.g., `triggerManualSync`, `pauseSync`,
+ * `resumeSync`). This standalone module is kept for future refactoring and to provide
+ * a stable home for the `COMMAND_IDS` constants, which must remain unchanged across
+ * releases so that user-defined hotkey bindings continue to work.
  */
 
 import { Notice } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
 
 /**
- * Command IDs - must be stable after release
+ * Stable command IDs used to register all plugin commands with Obsidian.
+ *
+ * These IDs are included in user hotkey configuration stored in `.obsidian/hotkeys.json`.
+ * Once a release ships, an ID MUST NEVER be changed or removed — doing so silently
+ * breaks any hotkey bindings users have configured for that command. New commands can
+ * freely add new IDs, but existing ones are effectively part of the plugin's public API.
+ *
+ * The full command ID registered with Obsidian is `{pluginId}:{COMMAND_IDS value}`.
  */
 export const COMMAND_IDS = {
     SYNC_NOW: 's3-sync-backup:sync-now',
@@ -21,7 +37,19 @@ export const COMMAND_IDS = {
 };
 
 /**
- * Register all plugin commands
+ * Register all additional plugin commands with Obsidian's command palette.
+ *
+ * Note: The core sync/backup commands (sync-now, backup-now, pause-sync, resume-sync,
+ * open-settings) are already registered in `main.ts` via the plugin's private
+ * `registerCommands()` method, because those require access to private plugin methods.
+ * This function registers supplementary commands and is provided for future use.
+ *
+ * The `@ts-ignore` annotations below suppress TypeScript errors that arise when calling
+ * plugin methods that are public at runtime but not declared on the `Plugin` type in
+ * Obsidian's type definitions (e.g., `triggerManualSync`, `pauseSync`). These are
+ * safe to call — the methods exist on the actual `S3SyncBackupPlugin` instance.
+ *
+ * @param plugin - The `S3SyncBackupPlugin` instance on which to register commands.
  */
 export function registerCommands(plugin: S3SyncBackupPlugin): void {
     // Sync now

@@ -2,6 +2,19 @@
  * Status Bar Module
  *
  * Renders compact sync and backup indicators in the Obsidian status bar.
+ * The bar consists of two independent clickable segments:
+ *   - **Sync segment** — shows current sync status (idle, syncing, error, conflicts,
+ *     paused, disabled) with a time-since-last-sync suffix.
+ *   - **Backup segment** — shows current backup status (idle, running, completed,
+ *     error, disabled) with a time-since-last-backup suffix.
+ *
+ * Both segments are keyboard-accessible (tabIndex=0, Enter/Space handlers) and
+ * emit a {@link StatusBarAction} to the registered action handler when activated,
+ * allowing the plugin to trigger a manual sync or backup on click.
+ *
+ * Call order: `new StatusBar(plugin)` → `setActionHandler(handler)` → `init()`.
+ * After init, call `updateSyncState()` / `updateBackupState()` to reflect new
+ * states as they change during plugin operation.
  */
 
 import { Plugin, setIcon, setTooltip } from 'obsidian';
@@ -9,16 +22,33 @@ import { BackupState, BackupStatus, SyncState, SyncStatus } from './types';
 import { formatRelativeTime } from './utils/time';
 
 /**
- * Intent emitted by a status segment click.
+ * Intent emitted by a status segment click or keyboard activation.
+ *
+ * `'sync'`   — the sync segment was activated; the plugin should trigger a manual sync.
+ * `'backup'` — the backup segment was activated; the plugin should trigger a manual backup.
  */
 export type StatusBarAction = 'sync' | 'backup';
 
+/**
+ * Visual specification for a single status indicator state.
+ *
+ * Used by {@link SYNC_STATUS_SPEC} and {@link BACKUP_STATUS_SPEC} to map each
+ * status value to its icon name (Lucide icon used by `setIcon`), short label,
+ * and an emoji fallback for environments where `setIcon` is unavailable.
+ */
 interface StatusIndicatorSpec {
+    /** Lucide icon identifier passed to Obsidian's `setIcon` helper. */
     icon: string;
+    /** Short human-readable label shown in the segment text (e.g., "Synced"). */
     label: string;
+    /** Emoji fallback rendered if `setIcon` throws (e.g., in test environments). */
     emoji: string;
 }
 
+/**
+ * Maps every {@link SyncStatus} value to its visual indicator specification.
+ * Module-level constant — allocated once, shared across all `StatusBar` instances.
+ */
 const SYNC_STATUS_SPEC: Record<SyncStatus, StatusIndicatorSpec> = {
     idle: { icon: 'cloud', label: 'Ready', emoji: '☁️' },
     synced: { icon: 'check', label: 'Synced', emoji: '✓' },
@@ -29,6 +59,10 @@ const SYNC_STATUS_SPEC: Record<SyncStatus, StatusIndicatorSpec> = {
     paused: { icon: 'pause', label: 'Paused', emoji: '⏸' },
 };
 
+/**
+ * Maps every {@link BackupStatus} value to its visual indicator specification.
+ * Module-level constant — allocated once, shared across all `StatusBar` instances.
+ */
 const BACKUP_STATUS_SPEC: Record<BackupStatus, StatusIndicatorSpec> = {
     idle: { icon: 'archive', label: 'Ready', emoji: '📦' },
     completed: { icon: 'check', label: 'Done', emoji: '✓' },
@@ -38,7 +72,15 @@ const BACKUP_STATUS_SPEC: Record<BackupStatus, StatusIndicatorSpec> = {
 };
 
 /**
- * StatusBar class - manages the bottom bar display.
+ * StatusBar — manages the plugin's status bar display in Obsidian.
+ *
+ * Renders two side-by-side clickable segments (sync + backup) inside a single
+ * status bar item. Each segment shows an icon and short text label. The full
+ * status bar item has a hover tooltip with detailed state information.
+ *
+ * Clicking (or pressing Enter/Space on) a segment emits the corresponding
+ * {@link StatusBarAction} to the registered handler, enabling one-click manual
+ * sync or backup from the status bar.
  */
 export class StatusBar {
     private statusBarEl: HTMLElement | null = null;
@@ -65,17 +107,28 @@ export class StatusBar {
         lastError: null,
     };
 
+    /**
+     * @param plugin - The Obsidian `Plugin` instance used to add the status bar item.
+     */
     constructor(private plugin: Plugin) {}
 
     /**
-     * Set the action handler invoked by click interactions.
+     * Register the action handler invoked when a status segment is clicked or
+     * activated via keyboard. Must be called before `init()`.
+     *
+     * @param handler - Callback that receives the {@link StatusBarAction} indicating
+     *   which segment was activated (`'sync'` or `'backup'`).
      */
     setActionHandler(handler: (action: StatusBarAction) => void): void {
         this.actionHandler = handler;
     }
 
     /**
-     * Initialize the status bar.
+     * Create the status bar item and both segment elements, then render initial state.
+     *
+     * Adds the status bar item via `Plugin.addStatusBarItem()`, creates the sync and
+     * backup segments (each with icon + text child spans), and performs an initial
+     * `update()` render. Must be called after `setActionHandler()`.
      */
     init(): void {
         this.statusBarEl = this.plugin.addStatusBarItem();
@@ -88,7 +141,13 @@ export class StatusBar {
     }
 
     /**
-     * Update the sync state.
+     * Merge a partial sync state update and re-render the status bar.
+     *
+     * Only the fields provided in `state` are updated; all other fields retain their
+     * current values. This allows callers to update a single field (e.g., just
+     * `status`) without having to reconstruct the full state object.
+     *
+     * @param state - Partial {@link SyncState} to merge into the current sync state.
      */
     updateSyncState(state: Partial<SyncState>): void {
         this.syncState = { ...this.syncState, ...state };
@@ -96,7 +155,12 @@ export class StatusBar {
     }
 
     /**
-     * Update the backup state.
+     * Merge a partial backup state update and re-render the status bar.
+     *
+     * Only the fields provided in `state` are updated; all other fields retain their
+     * current values.
+     *
+     * @param state - Partial {@link BackupState} to merge into the current backup state.
      */
     updateBackupState(state: Partial<BackupState>): void {
         this.backupState = { ...this.backupState, ...state };
@@ -104,7 +168,10 @@ export class StatusBar {
     }
 
     /**
-     * Destroy the status bar.
+     * Remove the status bar item from the DOM and clear all element references.
+     *
+     * Called by the plugin's `onunload()`. After `destroy()`, this instance must not
+     * be used — all element references are set to `null`.
      */
     destroy(): void {
         this.statusBarEl?.remove();
@@ -118,7 +185,15 @@ export class StatusBar {
     }
 
     /**
-     * Create a clickable sync or backup segment.
+     * Create a single clickable/keyboard-accessible segment inside the status bar.
+     *
+     * Creates a `<div>` containing an icon `<span>` and a text `<span>`. Wires up a
+     * `click` listener and a `keydown` listener (Enter/Space) for keyboard accessibility
+     * — `tabIndex=0` makes the element focusable via Tab key. Both event types invoke
+     * the registered action handler with the segment's type.
+     *
+     * @param type - Which segment to create: `'sync'` or `'backup'`.
+     * @returns The created segment `HTMLElement`.
      */
     private createSegment(type: StatusBarAction): HTMLElement {
         const segment = this.statusBarEl!.createDiv({ cls: `s3-sync-backup-segment s3-sync-backup-${type}` });
@@ -149,7 +224,11 @@ export class StatusBar {
     }
 
     /**
-     * Render the current states.
+     * Re-render both segments and refresh the tooltip.
+     *
+     * No-ops if the status bar has not been initialized (i.e., `init()` hasn't
+     * been called yet). Delegates to `renderSync()`, `renderBackup()`, and
+     * `getTooltipContent()`.
      */
     private update(): void {
         if (!this.statusBarEl || !this.syncSegmentEl || !this.backupSegmentEl) {
@@ -162,7 +241,11 @@ export class StatusBar {
     }
 
     /**
-     * Render the sync segment.
+     * Re-render the sync segment based on the current `syncState`.
+     *
+     * Updates the segment's CSS class (for status-based theming), re-renders the icon,
+     * and sets the text label. Appends a conflict count or relative last-sync time suffix
+     * when applicable.
      */
     private renderSync(): void {
         if (!this.syncSegmentEl || !this.syncIconEl || !this.syncTextEl) {
@@ -182,7 +265,10 @@ export class StatusBar {
     }
 
     /**
-     * Render the backup segment.
+     * Re-render the backup segment based on the current `backupState`.
+     *
+     * Updates the segment's CSS class, re-renders the icon, and sets the text label.
+     * Appends a relative last-backup time suffix when a previous backup time is known.
      */
     private renderBackup(): void {
         if (!this.backupSegmentEl || !this.backupIconEl || !this.backupTextEl) {
@@ -198,7 +284,13 @@ export class StatusBar {
     }
 
     /**
-     * Render an icon using Obsidian icons with an emoji fallback.
+     * Render the icon for a status segment using Obsidian's `setIcon` helper.
+     *
+     * Falls back to the spec's emoji character if `setIcon` throws (e.g., when the
+     * icon name is unrecognized in a test environment or older Obsidian version).
+     *
+     * @param target - The icon container `<span>` element to render into.
+     * @param spec   - The {@link StatusIndicatorSpec} providing the icon name and emoji.
      */
     private renderIcon(target: HTMLElement, spec: StatusIndicatorSpec): void {
         target.empty();
@@ -210,7 +302,13 @@ export class StatusBar {
     }
 
     /**
-     * Generate tooltip content.
+     * Build the multi-line tooltip string displayed when hovering over the status bar.
+     *
+     * Includes the plugin name, sync status/last-sync/conflicts/errors, backup
+     * status/last-backup/errors, and click-to-trigger hints. Lines are joined with
+     * newlines and passed to Obsidian's `setTooltip`.
+     *
+     * @returns A newline-delimited string suitable for `setTooltip`.
      */
     private getTooltipContent(): string {
         const lines = [
