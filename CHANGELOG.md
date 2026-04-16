@@ -1,5 +1,52 @@
 # Changelog
 
+## [3.0.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/2.0.0...3.0.0) (2026-04-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **crypto:** rewrite EncryptionCoordinator with local-source migration and lease locking
+
+### Features
+
+* **crypto:** add PayloadFormat type and wire payload-format metadata through S3 layer ([4db8ae2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/4db8ae293a80f9750934204a42203e39434f4b48))
+* **crypto:** refactor VaultMarker to v3 with transitioning state and migration fields ([0a8e769](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/0a8e769f6c380c5c9955bdbcc0ab2336e9d2408d))
+* **crypto:** rewrite EncryptionCoordinator with local-source migration and lease locking ([8fb22db](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/8fb22db954c2e380e867327136908f3ddc75cafa))
+* **settings:** wire EncryptionCoordinatorCallbacks through settings and main ([83173ad](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/83173adc1bd6c28b3683287b0fd5b5b0c0fa15c9))
+* **sync:** add SyncLease for remote advisory lock during migrations ([a70de2e](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/a70de2e483ad019cea8409ce3c500aee4213a4d5))
+* **sync:** make SyncPayloadCodec format-aware with metadata-driven decode ([7034759](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7034759169a44d3273320b595843de39c23c0c4f))
+* **sync:** wire payload format through planner and executor ([972b13d](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/972b13dfc7bddadf8bd31ede15de410830443814))
+
+
+### Bug Fixes
+
+* **crypto:** handle plaintext files gracefully during encryption disable migration ([89e272b](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/89e272b64a25b88699ccc94f2a2369a830194c34))
+* encryption issues ([ffe3935](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ffe3935328ee27e9a8311230507b5f5ccebe1ead))
+* encryption wiring and more tests ([7dfeaa7](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7dfeaa78fa5e01c77ed9393bafff96d835c832ed))
+* **settings:** use transient UI flag for encryption setup and implement reset button ([02a7ac7](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/02a7ac7f63d914f3bbf7d0f73ce3ddbdda7877bf))
+* **sync:** propagate exclude pattern changes to ChangeTracker immediately ([9d38c8f](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/9d38c8f32008f0246cfb92f0c16225cf1f299f39))
+
+
+### Documentation
+
+* add debug logging section to CONTRIBUTING.md ([bdfbbc3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/bdfbbc3f6d48d238724e209f32fc06adbb135df9))
+
+
+### Code Refactoring
+
+* **backup:** use encryption key presence as sole encryption guard ([5c6b16c](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5c6b16c367850f9fec554ec6fb795cb80f5d1b69))
+
+
+### Tests
+
+* **backup:** add unit tests for BackupDownloader ([7f725f0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7f725f077aa428444df02925e2ba141c781e5d01))
+* **crypto:** add multi-device encryption scenario tests ([b0c2358](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/b0c2358e9bea6d0bcbe87431beadce4e7edffc7f))
+* **crypto:** add unit tests for EncryptionCoordinator ([c12d7ff](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/c12d7ff20eb9a89ec2430b81cac094b61351e56d))
+* **storage:** expand ObsidianHttpHandler coverage ([9c76a1e](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/9c76a1e5fff00bbf8d89e149e17bad45d33e9aef))
+* **sync:** add missing decision table state combination tests ([1063770](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/106377089be2c9d50f672a1ca02a5611283705ea))
+* **sync:** add unit tests for SyncEngine orchestrator ([7f30bfd](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7f30bfd02c9ca7c2c2188be4e43a8a77c3375112))
+* **sync:** add unit tests for SyncScheduler lifecycle and guards ([4d0571d](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/4d0571d5a2a13a8b2025a2851780bb56a28486ee))
+
 ## [2.0.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.3...2.0.0) (2026-04-16)
 
 
