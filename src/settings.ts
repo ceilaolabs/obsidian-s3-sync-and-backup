@@ -9,7 +9,7 @@
  * - Advanced (debug logging, exclude patterns)
  */
 
-import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
 import {
 	S3ProviderType,
@@ -21,6 +21,7 @@ import {
 } from './types';
 import { S3Provider } from './storage/S3Provider';
 import { normalizePrefix } from './utils/paths';
+import { validatePassphrase } from './crypto/KeyDerivation';
 
 /**
  * Sync interval display names for dropdown.
@@ -295,49 +296,217 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	/**
 	 * Render the Encryption settings section.
 	 *
-	 * Shows the encryption toggle and, when enabled, displays a security warning and
-	 * the passphrase field. The passphrase is intentionally never saved to disk — it
-	 * is held in memory only for the duration of the session (handled by the crypto
-	 * module). Toggling encryption calls `this.display()` to show or hide the
-	 * passphrase field immediately.
+	 * The UI state is derived from the EncryptionCoordinator's runtime state:
+	 * - Plaintext + no key → show "Enable encryption" toggle + passphrase field
+	 * - Encrypted + no key → show "Unlock" passphrase field (vault locked)
+	 * - Encrypted + key loaded → show "Encryption active" status + disable button
+	 * - Transitioning → show migration status message
 	 *
 	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderEncryptionSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName('Encryption').setHeading();
 
+		const coordinator = this.plugin.getEncryptionCoordinator();
+		const state = coordinator?.getState();
+
+		// State: transitioning (migration in progress on this or another device)
+		if (state?.remoteMode === 'transitioning') {
+			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
+			noteEl.createEl('p', {
+				text: 'Encryption state transition in progress. Sync and backup are paused until migration completes.',
+			});
+			return;
+		}
+
+		// State: encrypted but no key loaded (locked — other device enabled, or restart)
+		if (state?.remoteMode === 'encrypted' && !state.hasKey) {
+			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
+			noteEl.createEl('p', {
+				text: 'Vault is encrypted. Enter your passphrase to unlock sync and backup.',
+			});
+
+			let passphraseValue = '';
+
+			new Setting(containerEl)
+				.setName('Passphrase')
+				.setDesc('Enter the passphrase used to encrypt this vault')
+				.addText((text) => {
+					text.setPlaceholder('Enter passphrase...');
+					text.inputEl.type = 'password';
+					text.onChange((value) => { passphraseValue = value; });
+				});
+
+			new Setting(containerEl)
+				.addButton((button) => {
+					button.setButtonText('Unlock');
+					button.setCta();
+					button.onClick(async () => {
+						if (!passphraseValue) {
+							new Notice('Please enter a passphrase');
+							return;
+						}
+
+						button.setButtonText('Unlocking...');
+						button.setDisabled(true);
+
+						try {
+							const success = await coordinator?.unlock(passphraseValue);
+							if (success) {
+								new Notice('Vault unlocked successfully');
+								this.display();
+							} else {
+								new Notice('Incorrect passphrase');
+							}
+						} catch (error) {
+							const msg = error instanceof Error ? error.message : 'Unknown error';
+							new Notice(`Unlock failed: ${msg}`);
+						} finally {
+							button.setButtonText('Unlock');
+							button.setDisabled(false);
+						}
+					});
+				});
+
+			return;
+		}
+
+		// State: encrypted and key loaded (fully unlocked)
+		if (state?.remoteMode === 'encrypted' && state.hasKey) {
+			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-info' });
+			noteEl.createEl('p', {
+				text: 'End-to-end encryption is active. All files are encrypted before upload.',
+			});
+
+			new Setting(containerEl)
+				.setName('Disable encryption')
+				.setDesc('Re-upload all files as plaintext and remove encryption')
+				.addButton((button) => {
+					button.setButtonText('Disable encryption');
+					button.setWarning();
+					button.onClick(async () => {
+						const confirmed = await this.showDisableEncryptionConfirmation();
+						if (!confirmed) return;
+
+						button.setButtonText('Disabling...');
+						button.setDisabled(true);
+
+						const result = await coordinator?.disableEncryption(
+							async () => { await this.plugin.saveSettings(); },
+						);
+
+						if (result?.success) {
+							this.plugin.onSettingsChanged();
+							this.display();
+						} else {
+							new Notice(`Failed to disable encryption: ${result?.error ?? 'Unknown error'}`);
+							button.setButtonText('Disable encryption');
+							button.setDisabled(false);
+						}
+					});
+				});
+
+			return;
+		}
+
+		// State: plaintext (default — encryption not enabled)
 		new Setting(containerEl)
 			.setName('Enable end-to-end encryption')
 			.setDesc('Encrypt all files before uploading to S3')
 			.addToggle((toggle) => {
-				toggle.setValue(this.plugin.settings.encryptionEnabled);
+				toggle.setValue(false);
 				toggle.onChange(async (value) => {
-					this.plugin.settings.encryptionEnabled = value;
-					await this.plugin.saveSettings();
-					this.display(); // Refresh to show/hide passphrase fields
+					if (value) {
+						// Show passphrase entry fields by re-rendering
+						this.plugin.settings.encryptionEnabled = true;
+						this.display();
+					}
 				});
 			});
 
-		if (this.plugin.settings.encryptionEnabled) {
-			// Note about encryption
-			const noteEl = containerEl.createEl('div', {
-				cls: 's3-sync-backup-warning',
-			});
+		// If the user just toggled ON, show passphrase entry
+		if (this.plugin.settings.encryptionEnabled && state?.remoteMode === 'plaintext') {
+			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
-				text: '⚠️ This passphrase encrypts both synced files and backups. If lost, your data cannot be recovered.',
+				text: 'This passphrase encrypts both synced files and backups. If lost, your data cannot be recovered.',
 			});
 
-			// Passphrase field will be implemented when encryption is built
+			let passphraseValue = '';
+			let strengthEl: HTMLElement | null = null;
+
 			new Setting(containerEl)
 				.setName('Passphrase')
-				.setDesc('Enter a strong passphrase (minimum 12 characters)')
+				.setDesc('Enter a strong passphrase (minimum 8 characters)')
 				.addText((text) => {
 					text.setPlaceholder('Enter passphrase...');
 					text.inputEl.type = 'password';
-					// Note: Passphrase is NOT saved to settings
-					// It will be handled by the encryption module
+					text.onChange((value) => {
+						passphraseValue = value;
+						if (strengthEl) {
+							const validation = validatePassphrase(value);
+							strengthEl.textContent = value.length === 0
+								? ''
+								: `Strength: ${validation.strength}${validation.message ? ` — ${validation.message}` : ''}`;
+							strengthEl.className = `s3-sync-passphrase-strength s3-sync-strength-${validation.strength}`;
+						}
+					});
+				});
+
+			strengthEl = containerEl.createEl('div', { cls: 's3-sync-passphrase-strength' });
+
+			new Setting(containerEl)
+				.addButton((button) => {
+					button.setButtonText('Enable encryption');
+					button.setCta();
+					button.onClick(async () => {
+						const validation = validatePassphrase(passphraseValue);
+						if (!validation.valid) {
+							new Notice(validation.message ?? 'Invalid passphrase');
+							return;
+						}
+
+						button.setButtonText('Enabling...');
+						button.setDisabled(true);
+
+						const result = await coordinator?.enableEncryption(
+							passphraseValue,
+							async () => { await this.plugin.saveSettings(); },
+						);
+
+						if (result?.success) {
+							this.plugin.onSettingsChanged();
+							this.display();
+						} else {
+							new Notice(`Failed to enable encryption: ${result?.error ?? 'Unknown error'}`);
+							button.setButtonText('Enable encryption');
+							button.setDisabled(false);
+						}
+					});
+				});
+
+			// Cancel button to revert the toggle
+			new Setting(containerEl)
+				.addButton((button) => {
+					button.setButtonText('Cancel');
+					button.onClick(async () => {
+						this.plugin.settings.encryptionEnabled = false;
+						await this.plugin.saveSettings();
+						this.display();
+					});
 				});
 		}
+	}
+
+	/**
+	 * Show a confirmation modal before disabling encryption.
+	 *
+	 * @returns true if the user confirmed, false if cancelled.
+	 */
+	private showDisableEncryptionConfirmation(): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new DisableEncryptionModal(this.app, resolve);
+			modal.open();
+		});
 	}
 
 	/**
@@ -607,5 +776,66 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					new Notice('Reset functionality coming soon');
 				});
 			});
+	}
+}
+
+/**
+ * Confirmation modal shown when the user requests to disable encryption.
+ *
+ * Warns that all vault files will be re-uploaded to S3 as plaintext and that
+ * the operation cannot be interrupted once started. Resolves a Promise with
+ * `true` when the user clicks "Disable encryption", or `false` on cancel /
+ * close.
+ */
+class DisableEncryptionModal extends Modal {
+	private resolve: (value: boolean) => void;
+
+	constructor(app: App, resolve: (value: boolean) => void) {
+		super(app);
+		this.resolve = resolve;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+
+		contentEl.createEl('h2', { text: 'Disable encryption?' });
+
+		contentEl.createEl('p', {
+			text:
+				'This will re-upload every file in your vault to S3 as plaintext. ' +
+				'The operation may take several minutes depending on vault size.',
+		});
+
+		contentEl.createEl('p', {
+			text:
+				'Other devices syncing this vault will detect the change and ' +
+				'switch to plaintext mode automatically on their next sync.',
+			cls: 'mod-warning',
+		});
+
+		const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
+
+		buttonContainer
+			.createEl('button', { text: 'Cancel' })
+			.addEventListener('click', () => {
+				this.resolve(false);
+				this.close();
+			});
+
+		const confirmBtn = buttonContainer.createEl('button', {
+			text: 'Disable encryption',
+			cls: 'mod-warning',
+		});
+		confirmBtn.addEventListener('click', () => {
+			this.resolve(true);
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		// If the user closed the modal via Escape or clicking outside,
+		// resolve as cancelled so the caller isn't left hanging.
+		this.resolve(false);
 	}
 }
