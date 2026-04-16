@@ -1,8 +1,27 @@
 /**
  * Obsidian HTTP Handler for AWS SDK v3
  *
- * Custom HTTP handler that uses Obsidian's requestUrl API
- * to bypass CORS restrictions. Implements the Smithy HttpHandler interface.
+ * Custom HTTP handler that bridges the AWS SDK v3 Smithy `HttpHandler`
+ * interface to Obsidian's `requestUrl` API, bypassing browser CORS
+ * restrictions that would otherwise block direct S3 requests.
+ *
+ * **Why this is needed** — Obsidian plugins run inside an Electron
+ * browser context where the standard `fetch()` API is subject to the
+ * same CORS policy as any other web page.  S3-compatible endpoints
+ * typically do not include the required `Access-Control-Allow-Origin`
+ * headers for arbitrary origins.  Obsidian's `requestUrl` operates
+ * outside the browser sandbox (via Electron's main process IPC) and is
+ * therefore not restricted by CORS.
+ *
+ * **How it integrates** — `S3Config.buildS3ClientConfig` passes an
+ * instance of this class as `requestHandler` in the `S3Client` config.
+ * Every HTTP request the SDK would normally issue (sign, send, receive)
+ * is routed through `handle()` instead of native `fetch`.
+ *
+ * **Interface contract** — Implements the Smithy `IHttpHandler` duck-type:
+ * `handle()`, `updateHttpClientConfig()`, `httpHandlerConfigs()`, and
+ * `destroy()`.  The AWS SDK calls these methods internally; callers of
+ * `S3Provider` never interact with this class directly.
  */
 
 import { requestUrl, RequestUrlParam } from 'obsidian';
@@ -10,20 +29,47 @@ import { HttpRequest, HttpResponse } from '@smithy/protocol-http';
 import { HttpHandlerOptions } from '@smithy/types';
 
 /**
- * ObsidianHttpHandler - Uses Obsidian's requestUrl for S3 requests
+ * AWS SDK v3 `HttpHandler` implementation that routes all S3 requests through
+ * Obsidian's `requestUrl` API to sidestep browser CORS restrictions.
  *
- * This handler bypasses browser CORS restrictions by using Obsidian's
- * native HTTP request API which operates outside the browser sandbox.
+ * Used exclusively as the `requestHandler` option in `buildS3ClientConfig`.
+ * The AWS SDK calls `handle()` for every outbound HTTP request; the rest of
+ * the Smithy interface (`updateHttpClientConfig`, `httpHandlerConfigs`,
+ * `destroy`) are stubs required by the interface contract.
  */
 export class ObsidianHttpHandler {
     private requestTimeout: number;
 
+    /**
+     * Create a new handler instance.
+     *
+     * @param options - Optional configuration object.
+     * @param options.requestTimeout - Milliseconds before a request is
+     *   considered timed out. Defaults to `30000` (30 s). This value is
+     *   stored and returned by `httpHandlerConfigs()` for the SDK's
+     *   awareness; Obsidian's `requestUrl` does not accept a timeout
+     *   parameter and enforces its own internal timeout.
+     */
     constructor(options?: { requestTimeout?: number }) {
         this.requestTimeout = options?.requestTimeout ?? 30000;
     }
 
     /**
-     * Handle an HTTP request using Obsidian's requestUrl
+     * Translate a Smithy `HttpRequest` into an Obsidian `requestUrl` call
+     * and wrap the response as a Smithy `HttpResponse`.
+     *
+     * This is the primary method called by the AWS SDK for every S3 operation.
+     * The full URL is assembled by `buildUrl`, the response body is wrapped by
+     * `createResponseBody`, and HTTP-level errors (4xx/5xx) are returned as
+     * valid responses rather than thrown exceptions — the SDK's own error
+     * parser handles status codes.
+     *
+     * @param request - Smithy HTTP request produced by the AWS SDK middleware.
+     * @param _options - SDK handler options (e.g. abortSignal); not used here
+     *   because `requestUrl` does not support request cancellation.
+     * @returns Wrapped Smithy `HttpResponse` ready for SDK deserialization.
+     * @throws {Error} Only on network-level failures (DNS error, connection
+     *   refused, etc.) — HTTP error status codes are NOT thrown.
      */
     async handle(
         request: HttpRequest,
@@ -39,6 +85,10 @@ export class ObsidianHttpHandler {
             if (value !== undefined) {
                 // Skip headers that can cause issues
                 const lowerKey = key.toLowerCase();
+                // Obsidian's requestUrl automatically sets Content-Length and
+                // Host based on the body and URL respectively. Including them
+                // explicitly causes either duplicate headers or AWS signature
+                // mismatches because the signed value and the sent value differ.
                 if (lowerKey === 'content-length' || lowerKey === 'host') {
                     continue;
                 }
@@ -51,7 +101,11 @@ export class ObsidianHttpHandler {
             url,
             method: request.method as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
             headers,
-            throw: false, // Don't throw on HTTP errors
+            // `throw: false` instructs Obsidian NOT to throw on HTTP error
+            // status codes (4xx/5xx). We return them as normal responses so
+            // the AWS SDK's own error parser can inspect the status and body
+            // and produce the correct typed error (e.g. NoSuchKey, AccessDenied).
+            throw: false,
         };
 
         // Add body only if present and not a GET/HEAD request
@@ -103,7 +157,17 @@ export class ObsidianHttpHandler {
     }
 
     /**
-     * Build full URL from HttpRequest
+     * Assemble a full URL string from the components of a Smithy `HttpRequest`.
+     *
+     * The SDK represents URLs in decomposed form (protocol, hostname, port,
+     * path, query map) rather than as a pre-built string.  This method
+     * reconstructs the URL, omitting the port when it matches the default
+     * for the scheme (80 for HTTP, 443 for HTTPS), and serializes the query
+     * map into a properly percent-encoded query string.  Array-valued query
+     * parameters are expanded into repeated key=value pairs.
+     *
+     * @param request - Smithy HTTP request with decomposed URL fields.
+     * @returns Fully-qualified URL string ready for `requestUrl`.
      */
 	private buildUrl(request: HttpRequest): string {
         // Get protocol without trailing colon if present
@@ -155,10 +219,18 @@ export class ObsidianHttpHandler {
 	}
 
 	/**
-	 * Create a browser-compatible response body for the AWS SDK.
+	 * Wrap an `ArrayBuffer` (from Obsidian's response) into the body type
+	 * expected by the AWS SDK v3 browser deserializers.
 	 *
-	 * `GetObject` deserialization accepts Blob or ReadableStream, but the
-	 * browser checksum middleware only supports ReadableStream sources.
+	 * The SDK's `GetObject` deserializer accepts either a `Blob` or a
+	 * `ReadableStream<Uint8Array>` as the response body, but the browser
+	 * checksum middleware (which validates integrity) only accepts
+	 * `ReadableStream`.  When `ReadableStream` is available (all modern
+	 * browsers and Electron), a single-chunk stream is created.  The `Blob`
+	 * fallback is kept for environments where `ReadableStream` is unavailable.
+	 *
+	 * @param arrayBuffer - Raw response bytes from Obsidian's `requestUrl`.
+	 * @returns `ReadableStream<Uint8Array>` when available, `Blob` otherwise.
 	 */
 	private createResponseBody(arrayBuffer: ArrayBuffer): ReadableStream<Uint8Array> | Blob {
 		if (typeof ReadableStream === 'function') {
@@ -177,14 +249,29 @@ export class ObsidianHttpHandler {
 	}
 
     /**
-     * Required by AWS SDK - update HTTP client configuration
+     * No-op stub required by the Smithy `IHttpHandler` interface.
+     *
+     * The AWS SDK calls this method to propagate dynamic configuration updates
+     * (e.g. socket keep-alive settings) to the underlying HTTP client.  Because
+     * `requestUrl` is a thin wrapper over Electron IPC with no configurable
+     * socket layer, there is nothing to update.
+     *
+     * @param _key - Configuration key (unused).
+     * @param _value - Configuration value (unused).
      */
     updateHttpClientConfig(_key: never, _value: never): void {
         // No configuration to update
     }
 
     /**
-     * Required by AWS SDK - return HTTP handler configs
+     * Return the current handler configuration for the AWS SDK's awareness.
+     *
+     * The SDK uses the returned map to surface handler settings (e.g.
+     * `requestTimeout`) in error messages and telemetry.  Only
+     * `requestTimeout` is meaningful here; there are no socket-level
+     * settings to report.
+     *
+     * @returns Map of handler configuration keys and their current values.
      */
     httpHandlerConfigs(): Record<string, unknown> {
         return {
@@ -193,7 +280,11 @@ export class ObsidianHttpHandler {
     }
 
     /**
-     * Cleanup resources
+     * No-op stub satisfying the Smithy `IHttpHandler` interface.
+     *
+     * A real HTTP client implementation (e.g. Node.js `http.Agent`) would
+     * release open sockets here.  `requestUrl` manages its own lifecycle
+     * through Electron IPC and does not expose any resources to release.
      */
     destroy(): void {
         // Nothing to clean up

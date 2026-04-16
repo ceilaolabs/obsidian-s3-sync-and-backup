@@ -3,6 +3,20 @@
  *
  * Provides configuration utilities for different S3-compatible providers.
  * Supports AWS S3, MinIO, Cloudflare R2, and custom endpoints.
+ *
+ * The main export is `buildS3ClientConfig`, which assembles a complete
+ * `S3ClientConfig` from plugin settings.  Provider-specific concerns
+ * (endpoint URL selection, path-style addressing, region defaults) are
+ * encapsulated in the helpers below so that `S3Provider` and tests can
+ * inspect or override them independently.
+ *
+ * **Why a custom HTTP handler** — Obsidian plugins run in a browser-like
+ * Electron context where `fetch()` is subject to CORS restrictions.
+ * S3-compatible endpoints rarely serve the `Access-Control-Allow-Origin`
+ * header for arbitrary origins, so native `fetch` would be blocked.
+ * Every `S3Client` built here receives an `ObsidianHttpHandler` instance
+ * as its `requestHandler`, routing all HTTP traffic through Obsidian's
+ * `requestUrl` API which operates outside the browser sandbox.
  */
 
 import { S3ClientConfig } from '@aws-sdk/client-s3';
@@ -12,10 +26,16 @@ import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 // Provider endpoints are determined dynamically based on settings
 
 /**
- * Get the S3 endpoint URL for a given provider
+ * Get the S3 endpoint URL for a given provider.
  *
- * @param settings - Plugin settings containing provider info
- * @returns Endpoint URL or undefined for AWS default
+ * AWS S3 does not require an explicit endpoint — the SDK constructs it from
+ * the region.  All other providers require the user to supply one.
+ *
+ * @param settings - Plugin settings containing provider info and optional
+ *   `endpoint` override.
+ * @returns Endpoint URL string, or `undefined` for AWS (SDK uses the default).
+ * @throws {Error} If a non-AWS provider is selected but no endpoint has been
+ *   configured in settings.
  */
 export function getEndpointForProvider(settings: S3SyncBackupSettings): string | undefined {
     switch (settings.provider) {
@@ -51,15 +71,21 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
 }
 
 /**
- * Determine if path-style addressing should be used
+ * Determine if path-style addressing should be used for a given provider.
  *
- * Path-style: https://s3.region.amazonaws.com/bucket/key
- * Virtual-hosted: https://bucket.s3.region.amazonaws.com/key
+ * Path-style: `https://s3.region.amazonaws.com/bucket/key`
+ * Virtual-hosted: `https://bucket.s3.region.amazonaws.com/key`
  *
- * MinIO and some other providers require path-style
+ * MinIO and some other providers require path-style addressing because they
+ * do not support virtual-hosted-style (the bucket name is not a valid DNS
+ * sub-domain on self-hosted instances).  Cloudflare R2 supports both modes
+ * but path-style is more reliable across different R2 account configurations
+ * and avoids potential wildcard certificate issues.
  *
- * @param settings - Plugin settings
- * @returns Whether to force path style
+ * @param settings - Plugin settings containing the provider type and the
+ *   user's `forcePathStyle` preference for AWS/custom providers.
+ * @returns `true` if `PutObject` and other requests should use path-style
+ *   bucket addressing.
  */
 export function shouldForcePathStyle(settings: S3SyncBackupSettings): boolean {
     switch (settings.provider) {
@@ -85,22 +111,36 @@ export function shouldForcePathStyle(settings: S3SyncBackupSettings): boolean {
 }
 
 /**
- * Build complete S3ClientConfig from plugin settings
+ * Build a complete `S3ClientConfig` object from plugin settings.
  *
- * @param settings - Plugin settings
- * @returns S3ClientConfig ready for S3Client constructor
+ * This is the single factory that `S3Provider.getClient()` calls to
+ * initialise (or re-initialise after a settings change) the underlying
+ * `S3Client`.  All provider-specific knobs (endpoint, path-style, region)
+ * are resolved here via the helper functions above.
+ *
+ * @param settings - Full plugin settings object.
+ * @returns A ready-to-use `S3ClientConfig` for the `S3Client` constructor.
+ * @throws {Error} If the selected provider requires an endpoint but none is
+ *   configured (forwarded from `getEndpointForProvider`).
  */
 export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientConfig {
     const endpoint = getEndpointForProvider(settings);
 
     const config: S3ClientConfig = {
+        // The AWS SDK requires a region even for non-AWS providers.  `'auto'`
+        // is Cloudflare R2's documented value and is a harmless default for
+        // MinIO and custom endpoints which ignore the region header entirely.
         region: settings.region || 'auto',
         credentials: {
             accessKeyId: settings.accessKeyId,
             secretAccessKey: settings.secretAccessKey,
         },
         forcePathStyle: shouldForcePathStyle(settings),
-        // Use Obsidian's requestUrl to bypass CORS restrictions
+        // Route all HTTP traffic through Obsidian's requestUrl API.  This is
+        // required because the plugin runs in a browser-like Electron context
+        // where native fetch() is blocked by CORS for S3-compatible origins.
+        // ObsidianHttpHandler uses Electron's main-process IPC channel which
+        // is not subject to browser CORS policy.
         requestHandler: new ObsidianHttpHandler({
             requestTimeout: 30000,
         }),
@@ -115,10 +155,15 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
 }
 
 /**
- * Validate that all required connection settings are present
+ * Validate that all required connection settings are present and consistent.
  *
- * @param settings - Plugin settings
- * @returns Array of validation error messages (empty if valid)
+ * Performs client-side validation before attempting a network request, so
+ * that users receive clear, actionable error messages without incurring an
+ * unnecessary round-trip to S3.
+ *
+ * @param settings - Plugin settings to validate.
+ * @returns Array of human-readable validation error messages.  An empty
+ *   array means settings are valid and a connection attempt is safe.
  */
 export function validateConnectionSettings(settings: S3SyncBackupSettings): string[] {
     const errors: string[] = [];
@@ -157,10 +202,14 @@ export function validateConnectionSettings(settings: S3SyncBackupSettings): stri
 }
 
 /**
- * Get user-friendly provider name for display
+ * Return a human-readable display name for a provider type.
  *
- * @param provider - Provider type
- * @returns Display name
+ * Used in settings UI labels, log messages, and error strings where the raw
+ * `S3ProviderType` literal (`'r2'`, `'minio'`, etc.) would be confusing to
+ * non-technical users.
+ *
+ * @param provider - Provider type identifier.
+ * @returns Display-friendly name string (e.g. `"Cloudflare R2"`).
  */
 export function getProviderDisplayName(provider: S3ProviderType): string {
     switch (provider) {

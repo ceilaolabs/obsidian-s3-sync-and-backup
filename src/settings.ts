@@ -23,7 +23,12 @@ import { S3Provider } from './storage/S3Provider';
 import { normalizePrefix } from './utils/paths';
 
 /**
- * Sync interval display names for dropdown
+ * Sync interval display names for dropdown.
+ *
+ * Maps each allowed sync interval (in minutes) to a human-readable label shown in
+ * the settings UI. The keys are the numeric `SyncIntervalMinutes` union values and
+ * must stay in sync with that type. Stored as a module-level constant so it is
+ * only allocated once regardless of how many times the settings tab is rendered.
  */
 const SYNC_INTERVAL_NAMES: Record<SyncIntervalMinutes, string> = {
 	1: '1 minute',
@@ -35,12 +40,25 @@ const SYNC_INTERVAL_NAMES: Record<SyncIntervalMinutes, string> = {
 };
 
 /**
- * S3SyncBackupSettingTab - Plugin settings UI
+ * S3SyncBackupSettingTab — Obsidian settings UI for the plugin.
+ *
+ * Extends `PluginSettingTab` to render a multi-section configuration panel
+ * inside Obsidian's native Settings modal. Sections are rendered in separate
+ * private methods (Connection, Encryption, Sync, Backup, Advanced) to keep
+ * `display()` readable and each domain concern self-contained.
+ *
+ * Provider-conditional fields (endpoint URL, force-path-style) are shown or
+ * hidden by calling `this.display()` on provider change, which fully re-renders
+ * the panel with the current settings state.
  */
 export class S3SyncBackupSettingTab extends PluginSettingTab {
 	plugin: S3SyncBackupPlugin;
 	private testConnectionButton: HTMLButtonElement | null = null;
 
+	/**
+	 * @param app    - The Obsidian application instance.
+	 * @param plugin - The plugin instance that owns this settings tab.
+	 */
 	constructor(app: App, plugin: S3SyncBackupPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
@@ -61,7 +79,14 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Render Connection Settings Section
+	 * Render the Connection settings section.
+	 *
+	 * Renders provider dropdown plus provider-conditional fields: endpoint URL
+	 * (hidden for AWS), force-path-style toggle (shown only for MinIO and custom),
+	 * and the "Test connection" button. Changing the provider calls `this.display()`
+	 * to fully re-render so conditional fields appear or disappear immediately.
+	 *
+	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderConnectionSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName('Connection').setHeading();
@@ -183,7 +208,12 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Get endpoint description based on provider
+	 * Return a human-readable description for the endpoint URL field.
+	 *
+	 * Each provider has a distinct URL format, so the description gives provider-
+	 * specific guidance (e.g., the R2 account-ID URL pattern).
+	 *
+	 * @returns A localized description string appropriate for the current provider.
 	 */
 	private getEndpointDescription(): string {
 		switch (this.plugin.settings.provider) {
@@ -199,7 +229,13 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Get endpoint placeholder based on provider
+	 * Return the placeholder text for the endpoint URL input field.
+	 *
+	 * Provides a concrete example URL so users know the expected format for their
+	 * chosen provider (e.g., the MinIO localhost URL pattern).
+	 *
+	 * @returns A provider-specific example URL string, or an empty string for AWS
+	 *   (endpoint not shown for AWS).
 	 */
 	private getEndpointPlaceholder(): string {
 		switch (this.plugin.settings.provider) {
@@ -215,7 +251,15 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Test S3 connection
+	 * Test the configured S3 connection and report the result to the user.
+	 *
+	 * Creates a temporary, isolated `S3Provider` with the current settings (does not
+	 * reuse the plugin's shared provider) and calls `testConnection()`. Disables the
+	 * button during the test to prevent concurrent requests. Displays a `Notice` with
+	 * the success message or error, and resets the button text after a short delay.
+	 *
+	 * @param buttonEl - The "Test connection" button element to update during the test.
+	 * @returns A promise that resolves when the test completes and UI is updated.
 	 */
 	private async testConnection(buttonEl: HTMLButtonElement): Promise<void> {
 		const originalText = buttonEl.textContent || 'Test Connection';
@@ -249,7 +293,15 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Render Encryption Settings Section
+	 * Render the Encryption settings section.
+	 *
+	 * Shows the encryption toggle and, when enabled, displays a security warning and
+	 * the passphrase field. The passphrase is intentionally never saved to disk — it
+	 * is held in memory only for the duration of the session (handled by the crypto
+	 * module). Toggling encryption calls `this.display()` to show or hide the
+	 * passphrase field immediately.
+	 *
+	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderEncryptionSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName('Encryption').setHeading();
@@ -289,7 +341,15 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Render Sync Settings Section
+	 * Render the Sync settings section.
+	 *
+	 * Always shows the "Enable sync" master toggle. When sync is enabled, additional
+	 * fields are rendered conditionally: sync prefix, auto-sync toggle, sync interval
+	 * (only when auto-sync is on), and sync-on-startup toggle. Toggling the master
+	 * switch or auto-sync calls `this.plugin.onSettingsChanged()` to restart services
+	 * with the new configuration.
+	 *
+	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderSyncSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName('Sync').setHeading();
@@ -368,7 +428,14 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Render Backup Settings Section
+	 * Render the Backup settings section.
+	 *
+	 * Always shows the "Enable backups" master toggle. When enabled, renders backup
+	 * prefix, interval, retention policy sub-section (mode + days/copies depending on
+	 * mode), and a "Backup now" button. Toggling backup or changing the interval calls
+	 * `this.plugin.onSettingsChanged()` to restart the backup scheduler.
+	 *
+	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderBackupSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName('Backup').setHeading();
@@ -490,7 +557,12 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Render Advanced Settings Section
+	 * Render the Advanced settings section.
+	 *
+	 * Renders debug logging toggle, exclude patterns textarea, and a "Reset to defaults"
+	 * button. Exclude patterns are comma-separated glob strings (e.g., `workspace*`).
+	 *
+	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderAdvancedSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName('Advanced').setHeading();

@@ -1,379 +1,283 @@
 /**
- * Sync Journal Module
+ * Provides the IndexedDB persistence layer for the v2 sync engine's per-file baselines.
  *
- * Provides persistent storage for sync state using IndexedDB.
- * Tracks file hashes, modification times, and sync status for each file.
+ * ## Why this exists
+ * Three-way reconciliation requires each device to remember the last-known-good state for
+ * every file it has successfully synced.  That "baseline" is what lets the engine distinguish
+ * "this file changed locally since the last sync" from "I never synced this file before".
+ * Without it the engine would have to treat every file as new on every run.
+ *
+ * ## Schema (DB_VERSION = 2)
+ * The database name is vault-scoped (`obsidian-s3-sync-journal-{vaultName}`) so that separate
+ * Obsidian vaults stored in the same bucket do not share state.
+ *
+ * Three object stores:
+ *
+ * | Store          | Key                      | Purpose                                              |
+ * |----------------|--------------------------|------------------------------------------------------|
+ * | `stateRecords` | vault-relative file path | Per-file sync baseline (mtime, size, SHA-256, etag)  |
+ * | `conflicts`    | vault-relative file path | Unresolved conflict records pending user resolution  |
+ * | `metadata`     | arbitrary string key     | Plugin-level key/value pairs (e.g. last sync time)   |
+ *
+ * ## v1 → v2 migration
+ * Version 1 stored everything in a single `entries` object store.  Version 2 splits the data
+ * into the three specialised stores above.  The `upgrade` callback in {@link SyncJournal.initialize}
+ * drops the legacy `entries` store if present so the old data is not carried forward — a fresh
+ * full sync repopulates the baselines from actual S3 state.
  */
 
-import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import { SyncJournalEntry, SyncFileStatus } from '../types';
+import { DBSchema, IDBPDatabase, openDB } from 'idb';
+import { ConflictRecord, SyncStateRecord } from '../types';
 
 /**
- * IndexedDB schema for sync journal
+ * Allowed value types for entries in the `metadata` object store.
+ *
+ * Keys such as `engineVersion` carry a string, `lastSuccessfulSyncAt` carries a number
+ * (epoch ms), and feature-flag keys carry a boolean.  The union avoids storing rich
+ * objects in what is intentionally a flat key/value bag.
+ */
+type SyncJournalMetadataValue = string | number | boolean;
+
+/**
+ * Typed schema definition consumed by the `idb` library for compile-time type safety.
+ *
+ * Extending `DBSchema` lets `IDBPDatabase<SyncJournalDB>` enforce correct store names,
+ * key types, and value types on every get/put/delete call — no string-based casts needed.
+ *
+ * Fields:
+ * - `stateRecords` — keyed by vault-relative file path; values are {@link SyncStateRecord}.
+ * - `conflicts`    — keyed by vault-relative file path; values are {@link ConflictRecord}.
+ * - `metadata`     — keyed by an arbitrary string; values are {@link SyncJournalMetadataValue}.
  */
 interface SyncJournalDB extends DBSchema {
-    /** Main journal entries store - keyed by file path */
-    entries: {
-        key: string;
-        value: SyncJournalEntry;
-        indexes: {
-            'by-status': SyncFileStatus;
-            'by-synced-at': number;
-        };
-    };
-
-    /** Metadata store for journal-level info */
-    metadata: {
-        key: string;
-        value: string | number | boolean;
-    };
+	stateRecords: {
+		key: string;
+		value: SyncStateRecord;
+	};
+	conflicts: {
+		key: string;
+		value: ConflictRecord;
+	};
+	metadata: {
+		key: string;
+		value: SyncJournalMetadataValue;
+	};
 }
 
-/**
- * Database name and version
- * Version should be bumped when schema changes
- */
-const DB_NAME = 'obsidian-s3-sync-journal';
-const DB_VERSION = 1;
+/** Common prefix for the IndexedDB database name; the vault name is appended at runtime. */
+const DB_NAME_PREFIX = 'obsidian-s3-sync-journal';
 
 /**
- * SyncJournal class - Manages sync state persistence
+ * Current IndexedDB schema version.
  *
- * Uses IndexedDB to store per-file sync state including:
- * - File hashes (local and remote)
- * - Modification times
- * - Sync status
- * - Last sync timestamp
+ * Bump this whenever an object store is added, removed, or has its key path changed.
+ * Version 2 reflects the migration that replaced the v1 `entries` store with the three
+ * purpose-specific stores (`stateRecords`, `conflicts`, `metadata`).
+ */
+const DB_VERSION = 2;
+
+/**
+ * Vault-scoped IndexedDB journal that persists per-file sync baselines, unresolved conflict
+ * records, and plugin-level metadata between sync runs.
+ *
+ * A single `SyncJournal` instance is created per plugin lifecycle and shared across the entire
+ * sync engine.  Callers must call {@link initialize} before using any other method and
+ * {@link close} during plugin unload to release the IDB connection.
+ *
+ * The database name is derived from the vault name at construction time, ensuring that two
+ * separate Obsidian vaults pointing at the same S3 bucket each maintain independent journals.
  */
 export class SyncJournal {
-    private db: IDBPDatabase<SyncJournalDB> | null = null;
-    private vaultName: string;
+	private db: IDBPDatabase<SyncJournalDB> | null = null;
 
-    /**
-     * Create a new SyncJournal instance
-     *
-     * @param vaultName - Name of the vault (used to namespace the database)
-     */
-    constructor(vaultName: string) {
-        this.vaultName = vaultName;
-    }
+	/**
+	 * Creates a new journal bound to a specific vault.
+	 *
+	 * @param vaultName - The Obsidian vault's display name, used to namespace the IDB database.
+	 */
+	constructor(private vaultName: string) {}
 
-    /**
-     * Initialize the journal database
-     * Must be called before using other methods
-     */
-    async initialize(): Promise<void> {
-        const dbName = `${DB_NAME}-${this.vaultName}`;
+	/**
+	 * Initializes the IndexedDB journal for the current vault.
+	 *
+	 * Opens (or creates) the database, running any necessary schema upgrades.
+	 * The `upgrade` callback handles both the initial creation of the three object stores
+	 * and the v1→v2 migration that removes the legacy `entries` store.
+	 *
+	 * Must be called once before any read/write operations.
+	 *
+	 * @throws If IndexedDB is unavailable or the upgrade transaction fails.
+	 */
+	async initialize(): Promise<void> {
+		this.db = await openDB<SyncJournalDB>(`${DB_NAME_PREFIX}-${this.vaultName}`, DB_VERSION, {
+			upgrade(db) {
+				const legacyDatabase = db as unknown as {
+					objectStoreNames: DOMStringList;
+					deleteObjectStore(name: string): void;
+				};
 
-        this.db = await openDB<SyncJournalDB>(dbName, DB_VERSION, {
-            upgrade(db) {
-                // Create entries store with indexes
-                if (!db.objectStoreNames.contains('entries')) {
-                    const entriesStore = db.createObjectStore('entries', { keyPath: 'path' });
-                    entriesStore.createIndex('by-status', 'status');
-                    entriesStore.createIndex('by-synced-at', 'syncedAt');
-                }
+				if (legacyDatabase.objectStoreNames.contains('entries')) {
+					legacyDatabase.deleteObjectStore('entries');
+				}
 
-                // Create metadata store
-                if (!db.objectStoreNames.contains('metadata')) {
-                    db.createObjectStore('metadata');
-                }
-            },
-        });
-    }
+				if (!db.objectStoreNames.contains('stateRecords')) {
+					db.createObjectStore('stateRecords', { keyPath: 'path' });
+				}
 
-    /**
-     * Ensure database is initialized
-     */
-    private ensureInitialized(): void {
-        if (!this.db) {
-            throw new Error('SyncJournal not initialized. Call initialize() first.');
-        }
-    }
+				if (!db.objectStoreNames.contains('conflicts')) {
+					db.createObjectStore('conflicts', { keyPath: 'path' });
+				}
 
-    /**
-     * Get a journal entry by file path
-     *
-     * @param path - File path relative to vault root
-     * @returns Journal entry or undefined if not found
-     */
-    async getEntry(path: string): Promise<SyncJournalEntry | undefined> {
-        this.ensureInitialized();
-        return await this.db!.get('entries', path);
-    }
+				if (!db.objectStoreNames.contains('metadata')) {
+					db.createObjectStore('metadata');
+				}
+			},
+		});
+	}
 
-    /**
-     * Set or update a journal entry
-     *
-     * @param entry - Journal entry to store
-     */
-    async setEntry(entry: SyncJournalEntry): Promise<void> {
-        this.ensureInitialized();
-        await this.db!.put('entries', entry);
-    }
+	/**
+	 * Guards all read/write operations against use-before-initialize mistakes.
+	 *
+	 * Called at the top of every public method so that callers get a clear error message
+	 * rather than a cryptic "cannot read properties of null" crash.
+	 *
+	 * @throws {Error} If {@link initialize} has not been called yet.
+	 */
+	private ensureInitialized(): void {
+		if (!this.db) {
+			throw new Error('SyncJournal not initialized. Call initialize() first.');
+		}
+	}
 
-    /**
-     * Delete a journal entry
-     *
-     * @param path - File path to delete
-     */
-    async deleteEntry(path: string): Promise<void> {
-        this.ensureInitialized();
-        await this.db!.delete('entries', path);
-    }
+	/**
+	 * Returns the stored baseline record for a vault path.
+	 *
+	 * @param path - Vault-relative file path.
+	 * @returns The stored baseline or undefined when absent.
+	 */
+	async getStateRecord(path: string): Promise<SyncStateRecord | undefined> {
+		this.ensureInitialized();
+		return await this.db!.get('stateRecords', path);
+	}
 
-    /**
-     * Get all journal entries
-     *
-     * @returns Array of all journal entries
-     */
-    async getAllEntries(): Promise<SyncJournalEntry[]> {
-        this.ensureInitialized();
-        return await this.db!.getAll('entries');
-    }
+	/**
+	 * Stores or replaces a baseline record.
+	 *
+	 * @param record - Baseline record to persist.
+	 */
+	async setStateRecord(record: SyncStateRecord): Promise<void> {
+		this.ensureInitialized();
+		await this.db!.put('stateRecords', record);
+	}
 
-    /**
-     * Get all entries with a specific status
-     *
-     * @param status - Status to filter by
-     * @returns Array of matching entries
-     */
-    async getEntriesByStatus(status: SyncFileStatus): Promise<SyncJournalEntry[]> {
-        this.ensureInitialized();
-        return await this.db!.getAllFromIndex('entries', 'by-status', status);
-    }
+	/**
+	 * Deletes the stored baseline record for a vault path.
+	 *
+	 * @param path - Vault-relative file path.
+	 */
+	async deleteStateRecord(path: string): Promise<void> {
+		this.ensureInitialized();
+		await this.db!.delete('stateRecords', path);
+	}
 
-    /**
-     * Get count of entries by status
-     *
-     * @returns Map of status to count
-     */
-    async getStatusCounts(): Promise<Map<SyncFileStatus, number>> {
-        const entries = await this.getAllEntries();
-        const counts = new Map<SyncFileStatus, number>();
+	/**
+	 * Returns all stored baseline records.
+	 *
+	 * @returns Every baseline record currently stored.
+	 */
+	async getAllStateRecords(): Promise<SyncStateRecord[]> {
+		this.ensureInitialized();
+		return await this.db!.getAll('stateRecords');
+	}
 
-        for (const entry of entries) {
-            counts.set(entry.status, (counts.get(entry.status) || 0) + 1);
-        }
+	/**
+	 * Returns a stored conflict record for a vault path.
+	 *
+	 * @param path - Vault-relative file path.
+	 * @returns The stored conflict record or undefined when absent.
+	 */
+	async getConflict(path: string): Promise<ConflictRecord | undefined> {
+		this.ensureInitialized();
+		return await this.db!.get('conflicts', path);
+	}
 
-        return counts;
-    }
+	/**
+	 * Stores or replaces a conflict record.
+	 *
+	 * @param record - Conflict record to persist.
+	 */
+	async setConflict(record: ConflictRecord): Promise<void> {
+		this.ensureInitialized();
+		await this.db!.put('conflicts', record);
+	}
 
-    /**
-     * Get entries that have pending changes
-     *
-     * @returns Array of entries with status 'pending' or 'new'
-     */
-    async getPendingEntries(): Promise<SyncJournalEntry[]> {
-        const allEntries = await this.getAllEntries();
-        return allEntries.filter((e) => e.status === 'pending' || e.status === 'new');
-    }
+	/**
+	 * Deletes a stored conflict record for a vault path.
+	 *
+	 * @param path - Vault-relative file path.
+	 */
+	async deleteConflict(path: string): Promise<void> {
+		this.ensureInitialized();
+		await this.db!.delete('conflicts', path);
+	}
 
-    /**
-     * Get entries that are in conflict
-     *
-     * @returns Array of entries with status 'conflict'
-     */
-    async getConflictedEntries(): Promise<SyncJournalEntry[]> {
-        return await this.getEntriesByStatus('conflict');
-    }
+	/**
+	 * Returns all stored conflict records.
+	 *
+	 * @returns Every unresolved conflict record currently stored.
+	 */
+	async getAllConflicts(): Promise<ConflictRecord[]> {
+		this.ensureInitialized();
+		return await this.db!.getAll('conflicts');
+	}
 
-    /**
-     * Mark a file as synced
-     *
-     * @param path - File path
-     * @param localHash - Current local hash (SHA-256)
-     * @param remoteHash - Current remote hash (SHA-256, usually same as local after sync)
-     * @param localMtime - Local modification time
-     * @param remoteMtime - Remote modification time
-     * @param remoteEtag - Optional S3 ETag for detecting remote changes
-     * @param lastModifiedBy - Optional device ID that modified this file
-     */
-    async markSynced(
-        path: string,
-        localHash: string,
-        remoteHash: string,
-        localMtime: number,
-        remoteMtime: number,
-        remoteEtag?: string,
-        lastModifiedBy?: string
-    ): Promise<void> {
-        const entry: SyncJournalEntry = {
-            path,
-            localHash,
-            remoteHash,
-            remoteEtag,
-            localMtime,
-            remoteMtime,
-            syncedAt: Date.now(),
-            status: 'synced',
-            lastModifiedBy,
-        };
-        await this.setEntry(entry);
-    }
+	/**
+	 * Reads a metadata value by key.
+	 *
+	 * @param key - Metadata key such as engineVersion or lastSuccessfulSyncAt.
+	 * @returns Stored metadata value or undefined when absent.
+	 */
+	async getMetadata(key: string): Promise<SyncJournalMetadataValue | undefined> {
+		this.ensureInitialized();
+		return await this.db!.get('metadata', key);
+	}
 
-    /**
-     * Mark a file as pending (local changes).
-     *
-     * Preserves the last synced snapshot from any existing entry so sync can
-     * compare the current local file against the previous baseline.
-     *
-     * New files are stored with status `new` and an empty baseline. This lets
-     * the sync engine treat them as first-time uploads instead of comparing
-     * them against a fake synced state.
-     *
-     * @param path - File path
-     * @param localHash - New local content hash (SHA-256)
-     * @param localMtime - New local modification time
-     */
-    async markPending(path: string, localHash: string, localMtime: number): Promise<void> {
-        const existing = await this.getEntry(path);
-        const hasSyncedBaseline = existing !== undefined && existing.syncedAt > 0;
+	/**
+	 * Stores a metadata value under an explicit key.
+	 *
+	 * @param key - Metadata key such as engineVersion or lastSuccessfulSyncAt.
+	 * @param value - Metadata value to persist.
+	 */
+	async setMetadata(key: string, value: SyncJournalMetadataValue): Promise<void> {
+		this.ensureInitialized();
+		await this.db!.put('metadata', value, key);
+	}
 
-        const entry: SyncJournalEntry = {
-            path,
-            localHash,
-            remoteHash: hasSyncedBaseline ? existing.remoteHash : '',
-            remoteEtag: hasSyncedBaseline ? existing.remoteEtag : undefined,
-            localMtime,
-            remoteMtime: hasSyncedBaseline ? existing.remoteMtime : 0,
-            syncedAt: hasSyncedBaseline ? existing.syncedAt : 0,
-            status: hasSyncedBaseline ? 'pending' : 'new',
-            lastModifiedBy: hasSyncedBaseline ? existing.lastModifiedBy : undefined,
-        };
-        await this.setEntry(entry);
-    }
+	/**
+	 * Clears all state, conflict, and metadata records.
+	 *
+	 * Runs all three `.clear()` calls inside a single readwrite transaction so the wipe
+	 * is atomic — a partial failure (e.g. tab closed mid-clear) cannot leave the journal
+	 * in a half-empty state.
+	 */
+	async clear(): Promise<void> {
+		this.ensureInitialized();
+		const tx = this.db!.transaction(['stateRecords', 'conflicts', 'metadata'], 'readwrite');
+		await Promise.all([
+			tx.objectStore('stateRecords').clear(),
+			tx.objectStore('conflicts').clear(),
+			tx.objectStore('metadata').clear(),
+		]);
+		await tx.done;
+	}
 
-    /**
-     * Mark a file as in conflict
-     *
-     * Preserves remoteEtag from existing entry for future conflict resolution.
-     *
-     * @param path - File path
-     * @param localHash - Local hash
-     * @param remoteHash - Remote hash
-     * @param remoteEtag - Optional new remote ETag (if known)
-     */
-    async markConflict(
-        path: string,
-        localHash: string,
-        remoteHash: string,
-        remoteEtag?: string
-    ): Promise<void> {
-        const existing = await this.getEntry(path);
-
-        const entry: SyncJournalEntry = {
-            path,
-            localHash,
-            remoteHash,
-            // Use provided ETag if available, otherwise preserve existing
-            remoteEtag: remoteEtag ?? existing?.remoteEtag,
-            localMtime: existing?.localMtime || Date.now(),
-            remoteMtime: existing?.remoteMtime || Date.now(),
-            syncedAt: existing?.syncedAt || 0,
-            status: 'conflict',
-            lastModifiedBy: existing?.lastModifiedBy, // Preserve device info
-        };
-        await this.setEntry(entry);
-    }
-
-    /**
-     * Mark a file as deleted (queued for remote deletion).
-     * Creates a minimal tombstone entry when the file has no prior journal record,
-     * ensuring locally-deleted files that exist on the remote are cleaned up.
-     *
-     * @param path - File path
-     */
-    async markDeleted(path: string): Promise<void> {
-        const existing = await this.getEntry(path);
-
-        if (existing) {
-            existing.status = 'deleted';
-            await this.setEntry(existing);
-            return;
-        }
-
-        const tombstone: SyncJournalEntry = {
-            path,
-            localHash: '',
-            remoteHash: '',
-            localMtime: 0,
-            remoteMtime: 0,
-            syncedAt: 0,
-            status: 'deleted',
-        };
-        await this.setEntry(tombstone);
-    }
-
-    /**
-     * Check if a file exists in the journal
-     *
-     * @param path - File path
-     * @returns true if entry exists
-     */
-    async hasEntry(path: string): Promise<boolean> {
-        const entry = await this.getEntry(path);
-        return entry !== undefined;
-    }
-
-    /**
-     * Clear all journal entries
-     * Use with caution - this will reset all sync state
-     */
-    async clear(): Promise<void> {
-        this.ensureInitialized();
-        await this.db!.clear('entries');
-    }
-
-    /**
-     * Get or set metadata value
-     */
-    async getMetadata(key: string): Promise<string | number | boolean | undefined> {
-        this.ensureInitialized();
-        return await this.db!.get('metadata', key);
-    }
-
-    async setMetadata(key: string, value: string | number | boolean): Promise<void> {
-        this.ensureInitialized();
-        await this.db!.put('metadata', value, key);
-    }
-
-    /**
-     * Export journal as JSON for backup
-     *
-     * @returns JSON string of all entries
-     */
-    async exportAsJson(): Promise<string> {
-        const entries = await this.getAllEntries();
-        return JSON.stringify(entries, null, 2);
-    }
-
-    /**
-     * Import journal from JSON backup
-     *
-     * @param json - JSON string of entries to import
-     * @param merge - If true, merge with existing; if false, replace all
-     */
-    async importFromJson(json: string, merge = true): Promise<void> {
-        const entries = JSON.parse(json) as SyncJournalEntry[];
-
-        if (!merge) {
-            await this.clear();
-        }
-
-        for (const entry of entries) {
-            await this.setEntry(entry);
-        }
-    }
-
-    /**
-     * Close the database connection
-     * Call this when the plugin is unloaded
-     */
-    close(): void {
-        if (this.db) {
-            this.db.close();
-            this.db = null;
-        }
-    }
+	/**
+	 * Closes the IndexedDB connection during plugin unload.
+	 */
+	close(): void {
+		if (this.db) {
+			this.db.close();
+			this.db = null;
+		}
+	}
 }

@@ -115,8 +115,8 @@ your-bucket/
 
 ---
 
-### 🛠️ Built with Engineering Excellence
-This plugin is developed with a focus on reliability, security, and code quality. We employ **GitHub Actions** for rigorous CI/CD, including automated versioning with `release-please`, mandatory linting standards, and comprehensive testing suites. With **200+ unit tests** and real-world **integration tests** against Cloudflare R2, every release is verified for stability. Our commitment to best practices ensures your data is handled with the utmost care.
+### Built with Engineering Excellence
+This plugin is developed with a focus on reliability, security, and code quality. We employ **GitHub Actions** for rigorous CI/CD, including automated versioning with `release-please`, mandatory linting standards, and comprehensive testing suites. With **430+ unit tests** (93%+ coverage) and real-world **integration tests** against Cloudflare R2, every release is verified for stability. Our commitment to best practices ensures your data is handled with the utmost care.
 
 ---
 
