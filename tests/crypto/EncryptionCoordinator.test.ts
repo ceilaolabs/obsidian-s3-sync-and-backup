@@ -783,4 +783,71 @@ describe('EncryptionCoordinator', () => {
 			expect(mockedVaultMarker).toHaveBeenLastCalledWith(mockS3Provider, 'new-prefix');
 		});
 	});
+
+	/** Multi-device sync scenarios for encryption state propagation. */
+	describe('multi-device scenarios', () => {
+		it('blocks sync when another device is enabling encryption (transitioning state)', async () => {
+			currentMarker().exists.mockResolvedValue(true);
+			currentMarker().getMetadata.mockResolvedValue(createMarkerMetadata('enabling'));
+			await coordinator.refreshRemoteMode(saveSettings);
+
+			expect(coordinator.shouldBlock()).toBe(true);
+			expect(coordinator.getBlockReason()).toContain('transition in progress');
+			expect(coordinator.getState().remoteMode).toBe('transitioning');
+		});
+
+		it('blocks sync when remote vault is encrypted but no passphrase entered', async () => {
+			currentMarker().exists.mockResolvedValue(true);
+			currentMarker().getMetadata.mockResolvedValue(createMarkerMetadata('enabled'));
+			await coordinator.refreshRemoteMode(saveSettings);
+
+			expect(coordinator.shouldBlock()).toBe(true);
+			expect(coordinator.getBlockReason()).toContain('enter passphrase');
+			expect(coordinator.getState()).toEqual({
+				remoteMode: 'encrypted',
+				hasKey: false,
+				isBusy: false,
+			});
+		});
+
+		it('unblocks sync after correct passphrase is entered on second device', async () => {
+			currentMarker().exists.mockResolvedValue(true);
+			currentMarker().getMetadata.mockResolvedValue(createMarkerMetadata('enabled'));
+			await coordinator.refreshRemoteMode(saveSettings);
+
+			expect(coordinator.shouldBlock()).toBe(true);
+
+			currentMarker().verify.mockResolvedValue(derivedKey);
+			const unlocked = await coordinator.unlock('correct-passphrase');
+
+			expect(unlocked).toBe(true);
+			expect(coordinator.shouldBlock()).toBe(false);
+			expect(coordinator.getState()).toEqual({
+				remoteMode: 'encrypted',
+				hasKey: true,
+				isBusy: false,
+			});
+		});
+
+		it('blocks sync when another device is disabling encryption', async () => {
+			currentMarker().exists.mockResolvedValue(true);
+			currentMarker().getMetadata.mockResolvedValue(createMarkerMetadata('disabling'));
+			await coordinator.refreshRemoteMode(saveSettings);
+
+			expect(coordinator.shouldBlock()).toBe(true);
+			expect(coordinator.getBlockReason()).toContain('transition in progress');
+			expect(coordinator.getState().remoteMode).toBe('transitioning');
+		});
+
+		it('auto-aligns local encryptionEnabled setting when remote marker is detected', async () => {
+			expect(settings.encryptionEnabled).toBe(false);
+
+			currentMarker().exists.mockResolvedValue(true);
+			currentMarker().getMetadata.mockResolvedValue(createMarkerMetadata('enabled'));
+			await coordinator.refreshRemoteMode(saveSettings);
+
+			expect(settings.encryptionEnabled).toBe(true);
+			expect(saveSettings).toHaveBeenCalled();
+		});
+	});
 });
