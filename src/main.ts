@@ -4,7 +4,7 @@
  * Main plugin entry point. Provides bi-directional vault synchronization
  * and scheduled backups with S3-compatible storage.
  *
- * @author CeilãoLabs
+ * @author Ceilão Labs
  */
 
 import { Notice, Plugin } from 'obsidian';

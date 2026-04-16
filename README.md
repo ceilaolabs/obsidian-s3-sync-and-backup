@@ -258,6 +258,6 @@ By default, <code>**/workspace*</code> and <code>.trash/**</code> are excluded. 
 
 ## License
 
-MIT © [CeilãoLabs](https://github.com/ceilaolabs)
+MIT © [Ceilão Labs](https://github.com/ceilaolabs)
 
-Made for the Obsidian community
+Made with love for the Obsidian community
