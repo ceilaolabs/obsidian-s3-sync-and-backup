@@ -68,8 +68,11 @@ export const BACKUP_INTERVAL_NAMES: Record<BackupInterval, string> = {
 export type RetentionMode = 'days' | 'copies';
 
 /**
- * Complete plugin settings interface
- * Note: Passphrase is NEVER stored - only derived key kept in memory during session
+ * Complete plugin settings interface.
+ *
+ * When `rememberPassphrase` is enabled, the raw passphrase is stored in `data.json`.
+ * The plugin's own settings directory is hardcoded-excluded from sync to prevent
+ * passphrase leakage to S3.
  */
 export interface S3SyncBackupSettings {
 	// Connection
@@ -83,7 +86,12 @@ export interface S3SyncBackupSettings {
 
 	// Encryption
 	encryptionEnabled: boolean;
-	// Note: passphrase never stored, only derived key in memory
+	/** When true, the passphrase is persisted in plugin settings (data.json) so the
+	 *  vault auto-unlocks on startup without user interaction. */
+	rememberPassphrase: boolean;
+	/** The raw passphrase string, saved only when `rememberPassphrase` is true.
+	 *  Stored in Obsidian's `data.json` which is excluded from sync by a hardcoded rule. */
+	savedPassphrase: string;
 
 	// Sync
 	syncEnabled: boolean;
@@ -119,6 +127,8 @@ export const DEFAULT_SETTINGS: S3SyncBackupSettings = {
 	forcePathStyle: false,
 
 	encryptionEnabled: false,
+	rememberPassphrase: false,
+	savedPassphrase: '',
 
 	syncEnabled: true,
 	syncPrefix: 'vault',

@@ -34,7 +34,7 @@ import { S3Provider } from '../storage/S3Provider';
 import { hashContent } from '../crypto/Hasher';
 import { encrypt } from '../crypto/FileEncryptor';
 import { BackupManifest, BackupResult, S3SyncBackupSettings } from '../types';
-import { addPrefix, matchesAnyGlob, normalizePrefix } from '../utils/paths';
+import { addPrefix, matchesAnyGlob, normalizePrefix, isPluginOwnPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 
 /**
@@ -299,6 +299,7 @@ export class SnapshotCreator {
      * @returns `true` if the path matches at least one exclude pattern, `false` otherwise.
      */
     private shouldExclude(path: string): boolean {
-        return matchesAnyGlob(path, this.settings.excludePatterns);
+        return matchesAnyGlob(path, this.settings.excludePatterns)
+            || isPluginOwnPath(path, this.app.vault.configDir);
     }
 }

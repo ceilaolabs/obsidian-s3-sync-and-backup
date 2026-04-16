@@ -14,6 +14,7 @@ import {
     getOriginalFromConflict,
     addPrefix,
     removePrefix,
+    isPluginOwnPath,
 } from '../../src/utils/paths';
 
 describe('Path Utils', () => {
@@ -238,6 +239,38 @@ describe('Path Utils', () => {
 
         it('should handle deeply nested paths', () => {
             expect(removePrefix('vault/a/b/c/d/file.md', 'vault')).toBe('a/b/c/d/file.md');
+        });
+    });
+
+    describe('isPluginOwnPath', () => {
+        it('should match data.json inside plugin directory', () => {
+            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup/data.json', '.obsidian')).toBe(true);
+        });
+
+        it('should match main.js inside plugin directory', () => {
+            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup/main.js', '.obsidian')).toBe(true);
+        });
+
+        it('should match the plugin directory itself', () => {
+            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup', '.obsidian')).toBe(true);
+        });
+
+        it('should not match other plugin directories', () => {
+            expect(isPluginOwnPath('.obsidian/plugins/other-plugin/data.json', '.obsidian')).toBe(false);
+        });
+
+        it('should not match files outside plugins directory', () => {
+            expect(isPluginOwnPath('.obsidian/workspace.json', '.obsidian')).toBe(false);
+            expect(isPluginOwnPath('Notes/my-note.md', '.obsidian')).toBe(false);
+        });
+
+        it('should work with custom configDir', () => {
+            expect(isPluginOwnPath('.config/plugins/s3-sync-and-backup/data.json', '.config')).toBe(true);
+            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup/data.json', '.config')).toBe(false);
+        });
+
+        it('should normalize backslashes in path', () => {
+            expect(isPluginOwnPath('.obsidian\\plugins\\s3-sync-and-backup\\data.json', '.obsidian')).toBe(true);
         });
     });
 });

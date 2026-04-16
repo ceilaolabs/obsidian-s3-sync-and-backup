@@ -25,6 +25,7 @@ type MockApp = App & {
  */
 const createMockApp = (): MockApp => ({
 	vault: {
+		configDir: '.obsidian',
 		on: jest.fn<void, [VaultEventName, VaultEventCallback]>(),
 		off: jest.fn<void, [VaultEventName, VaultEventCallback]>(),
 	},

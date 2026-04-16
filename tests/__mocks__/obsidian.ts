@@ -49,6 +49,7 @@ export class App {
 
 export class Vault {
     private files: Map<string, MockFile> = new Map();
+    configDir = '.obsidian';
 
     getName(): string {
         return 'TestVault';

@@ -29,7 +29,7 @@
  */
 
 import { App, TFile, TAbstractFile } from 'obsidian';
-import { isConflictFile, matchesAnyGlob } from '../utils/paths';
+import { isConflictFile, matchesAnyGlob, isPluginOwnPath } from '../utils/paths';
 
 /**
  * Listens to Obsidian vault events and maintains a live set of file paths
@@ -276,6 +276,8 @@ export class ChangeTracker {
 	 * @returns `true` if the path should be excluded from dirty tracking.
 	 */
 	private shouldExclude(path: string): boolean {
-		return isConflictFile(path) || matchesAnyGlob(path, this.excludePatterns);
+		return isConflictFile(path)
+			|| isPluginOwnPath(path, this.app.vault.configDir)
+			|| matchesAnyGlob(path, this.excludePatterns);
 	}
 }

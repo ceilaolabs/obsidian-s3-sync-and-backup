@@ -32,6 +32,7 @@ const mockedReadVaultFile = jest.mocked(readVaultFile);
  */
 const createMockApp = () => ({
     vault: {
+        configDir: '.obsidian',
         getFiles: jest.fn().mockReturnValue([]),
         read: jest.fn().mockResolvedValue('content'),
     },
