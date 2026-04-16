@@ -299,6 +299,7 @@ export class SyncExecutor {
 			fingerprint,
 			clientMtime: file.stat.mtime,
 			deviceId: this.deviceId,
+			payloadFormat: this.payloadCodec.getActivePayloadFormat(),
 		};
 
 		const etag = await this.s3Provider.uploadFile(remoteKey, payload, {
@@ -345,7 +346,7 @@ export class SyncExecutor {
 			throw new Error(`Remote file disappeared during sync: ${item.path}`);
 		}
 
-		const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content);
+		const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content, downloaded.payloadFormat);
 		const kind = getVaultFileKind(item.path);
 
 		await this.writeLocalFile(item.path, kind === 'text' ? new TextDecoder().decode(plaintext) : plaintext);
@@ -460,7 +461,7 @@ export class SyncExecutor {
 			const remoteKey = this.pathCodec.localToRemote(item.path);
 			const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
 			if (downloaded) {
-				const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content);
+				const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content, downloaded.payloadFormat);
 				const kind = getVaultFileKind(item.path);
 				await this.writeLocalFile(
 					remoteArtifactPath,
