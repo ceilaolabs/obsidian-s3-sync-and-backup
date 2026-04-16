@@ -355,6 +355,23 @@ export default class S3SyncBackupPlugin extends Plugin {
 		const state = this.encryptionCoordinator.getState();
 
 		if (state.remoteMode === 'encrypted' && !state.hasKey) {
+			// Auto-unlock with saved passphrase if "remember passphrase" is enabled
+			if (this.settings.rememberPassphrase && this.settings.savedPassphrase) {
+				const success = await this.encryptionCoordinator.unlock(this.settings.savedPassphrase);
+				if (success) {
+					if (this.settings.debugLogging) {
+						console.debug('[S3 Sync] Auto-unlocked vault with saved passphrase');
+					}
+					return;
+				}
+				// Saved passphrase is wrong (changed on another device?) — clear it
+				this.settings.rememberPassphrase = false;
+				this.settings.savedPassphrase = '';
+				await this.saveSettings();
+				new Notice('Saved passphrase is incorrect — enter the current passphrase in settings', 10000);
+				return;
+			}
+
 			new Notice('Vault is encrypted — enter passphrase in settings to unlock sync and backup', 10000);
 		} else if (state.remoteMode === 'transitioning') {
 			new Notice('Encryption migration in progress on another device — sync and backup paused', 10000);

@@ -340,6 +340,20 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				});
 
 			new Setting(containerEl)
+				.setName('Remember passphrase')
+				.setDesc('Save passphrase locally so the vault unlocks automatically on startup')
+				.addToggle((toggle) => {
+					toggle.setValue(this.plugin.settings.rememberPassphrase);
+					toggle.onChange(async (value) => {
+						this.plugin.settings.rememberPassphrase = value;
+						if (!value) {
+							this.plugin.settings.savedPassphrase = '';
+						}
+						await this.plugin.saveSettings();
+					});
+				});
+
+			new Setting(containerEl)
 				.addButton((button) => {
 					button.setButtonText('Unlock');
 					button.setCta();
@@ -355,6 +369,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						try {
 							const success = await coordinator?.unlock(passphraseValue);
 							if (success) {
+								if (this.plugin.settings.rememberPassphrase) {
+									this.plugin.settings.savedPassphrase = passphraseValue;
+									await this.plugin.saveSettings();
+								}
 								new Notice('Vault unlocked successfully');
 								this.display();
 							} else {
@@ -381,6 +399,20 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			});
 
 			new Setting(containerEl)
+				.setName('Remember passphrase')
+				.setDesc('Save passphrase locally so the vault unlocks automatically on startup')
+				.addToggle((toggle) => {
+					toggle.setValue(this.plugin.settings.rememberPassphrase);
+					toggle.onChange(async (value) => {
+						this.plugin.settings.rememberPassphrase = value;
+						if (!value) {
+							this.plugin.settings.savedPassphrase = '';
+						}
+						await this.plugin.saveSettings();
+					});
+				});
+
+			new Setting(containerEl)
 				.setName('Disable encryption')
 				.setDesc('Re-upload all files as plaintext and remove encryption')
 				.addButton((button) => {
@@ -398,6 +430,9 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						);
 
 						if (result?.success) {
+							this.plugin.settings.rememberPassphrase = false;
+							this.plugin.settings.savedPassphrase = '';
+							await this.plugin.saveSettings();
 							this.plugin.onSettingsChanged();
 							this.display();
 						} else {
@@ -456,6 +491,17 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			strengthEl = containerEl.createEl('div', { cls: 's3-sync-passphrase-strength' });
 
 			new Setting(containerEl)
+				.setName('Remember passphrase')
+				.setDesc('Save passphrase locally so the vault unlocks automatically on startup')
+				.addToggle((toggle) => {
+					toggle.setValue(this.plugin.settings.rememberPassphrase);
+					toggle.onChange(async (value) => {
+						this.plugin.settings.rememberPassphrase = value;
+						await this.plugin.saveSettings();
+					});
+				});
+
+			new Setting(containerEl)
 				.addButton((button) => {
 					button.setButtonText('Enable encryption');
 					button.setCta();
@@ -475,6 +521,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						);
 
 						if (result?.success) {
+							if (this.plugin.settings.rememberPassphrase) {
+								this.plugin.settings.savedPassphrase = passphraseValue;
+								await this.plugin.saveSettings();
+							}
 							this.showEncryptionSetup = false;
 							this.plugin.onSettingsChanged();
 							this.display();
