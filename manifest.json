@@ -4,7 +4,7 @@
 	"version": "3.1.0",
 	"minAppVersion": "1.0.0",
 	"description": "Bi-directional vault synchronization and scheduled backups for Obsidian using S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption.",
-	"author": "CeilãoLabs",
+	"author": "Ceilão Labs",
 	"authorUrl": "https://github.com/ceilaolabs",
 	"isDesktopOnly": false
 }
