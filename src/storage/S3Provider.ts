@@ -79,8 +79,23 @@ export class S3Provider {
      * @param settings - Full plugin settings. Only the connection-related
      *   fields are used here; sync/backup fields are ignored.
      */
-    constructor(settings: S3SyncBackupSettings) {
+    /**
+     * Create a new S3Provider instance.
+     *
+     * The underlying `S3Client` is not created here; it is built lazily on
+     * the first operation so that construction never throws even if settings
+     * are incomplete at the time the plugin loads.
+     *
+     * @param settings - Full plugin settings. Only the connection-related
+     *   fields are used here; sync/backup fields are ignored.
+     * @param client   - Optional pre-built `S3Client`. When provided, the
+     *   lazy client builder is bypassed entirely. Used by E2E tests to inject
+     *   a Node.js-compatible client (with `NodeHttpHandler`) instead of the
+     *   Obsidian-specific `ObsidianHttpHandler`.
+     */
+    constructor(settings: S3SyncBackupSettings, client?: S3Client) {
         this.settings = settings;
+        this.client = client ?? null;
     }
 
     /**
