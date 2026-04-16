@@ -20,7 +20,7 @@ import { SnapshotCreator } from '../backup/SnapshotCreator';
 import { BackupDownloader } from '../backup/BackupDownloader';
 import { VaultMarker } from './VaultMarker';
 import { validatePassphrase } from './KeyDerivation';
-import { encrypt, decrypt } from './FileEncryptor';
+import { encrypt, decrypt, isLikelyEncrypted } from './FileEncryptor';
 import { hashContent } from './Hasher';
 import {
 	EncryptionRuntimeState,
@@ -338,9 +338,27 @@ export class EncryptionCoordinator {
 			plaintext = rawContent;
 			uploadPayload = encrypt(plaintext, this.encryptionKey);
 		} else {
-			// Content is currently encrypted — decrypt it
-			plaintext = decrypt(rawContent, this.encryptionKey);
-			uploadPayload = plaintext;
+			// Content is currently encrypted — decrypt it.
+			// Files that were synced before encryption was enabled are still
+			// plaintext on S3. Detect them and skip the decryption step so
+			// the migration doesn't fail on mixed-state buckets.
+			if (!isLikelyEncrypted(rawContent)) {
+				// Already plaintext — just re-upload with updated metadata
+				plaintext = rawContent;
+				uploadPayload = rawContent;
+			} else {
+				try {
+					plaintext = decrypt(rawContent, this.encryptionKey);
+					uploadPayload = plaintext;
+				} catch {
+					// Decryption failed — file may be plaintext that happens
+					// to be large enough to pass the length check, or was
+					// encrypted with a different key. Treat as plaintext to
+					// avoid blocking the entire migration.
+					plaintext = rawContent;
+					uploadPayload = rawContent;
+				}
+			}
 		}
 
 		// Compute fingerprint from plaintext (always consistent regardless of encryption)

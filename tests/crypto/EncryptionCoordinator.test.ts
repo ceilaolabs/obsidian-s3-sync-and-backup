@@ -6,7 +6,7 @@ import { App, TFile } from 'obsidian';
 import { EncryptionCoordinator } from '../../src/crypto/EncryptionCoordinator';
 import { VaultMarker } from '../../src/crypto/VaultMarker';
 import { validatePassphrase } from '../../src/crypto/KeyDerivation';
-import { decrypt, encrypt } from '../../src/crypto/FileEncryptor';
+import { decrypt, encrypt, isLikelyEncrypted } from '../../src/crypto/FileEncryptor';
 import { hashContent } from '../../src/crypto/Hasher';
 import { encodeMetadata } from '../../src/sync/SyncObjectMetadata';
 import { matchesAnyGlob } from '../../src/utils/paths';
@@ -132,6 +132,7 @@ describe('EncryptionCoordinator', () => {
 	const mockedValidatePassphrase = validatePassphrase as jest.MockedFunction<typeof validatePassphrase>;
 	const mockedEncrypt = encrypt as jest.MockedFunction<typeof encrypt>;
 	const mockedDecrypt = decrypt as jest.MockedFunction<typeof decrypt>;
+	const mockedIsLikelyEncrypted = isLikelyEncrypted as jest.MockedFunction<typeof isLikelyEncrypted>;
 	const mockedHashContent = hashContent as jest.MockedFunction<typeof hashContent>;
 	const mockedEncodeMetadata = encodeMetadata as jest.MockedFunction<typeof encodeMetadata>;
 	const mockedMatchesAnyGlob = matchesAnyGlob as jest.MockedFunction<typeof matchesAnyGlob>;
@@ -196,6 +197,7 @@ describe('EncryptionCoordinator', () => {
 			deviceId: metadata.deviceId,
 		}));
 		mockedMatchesAnyGlob.mockReturnValue(false);
+		mockedIsLikelyEncrypted.mockReturnValue(false);
 
 		saveSettings.mockResolvedValue(undefined);
 		(mockS3Provider.listObjects as jest.Mock).mockResolvedValue([]);
@@ -722,6 +724,7 @@ describe('EncryptionCoordinator', () => {
 			]);
 			(mockPathCodec.remoteToLocal as jest.Mock).mockReturnValue('notes/encrypted.md');
 			(mockS3Provider.downloadFile as jest.Mock).mockResolvedValue(encryptedPayload);
+			mockedIsLikelyEncrypted.mockReturnValue(true);
 			(mockApp.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(new MockVaultFile('notes/encrypted.md', 7777));
 
 			const result = await coordinator.disableEncryption(saveSettings);
@@ -754,6 +757,7 @@ describe('EncryptionCoordinator', () => {
 			setListObjects([{ key: 'vault/notes/bad.md', size: 1, lastModified: new Date() }]);
 			(mockPathCodec.remoteToLocal as jest.Mock).mockReturnValue('notes/bad.md');
 			(mockS3Provider.downloadFile as jest.Mock).mockResolvedValue(encryptedPayload);
+			mockedIsLikelyEncrypted.mockReturnValue(true);
 			(mockApp.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(new MockVaultFile('notes/bad.md', 8888));
 			(mockS3Provider.uploadFile as jest.Mock).mockRejectedValue(new Error('decrypt upload failed'));
 
