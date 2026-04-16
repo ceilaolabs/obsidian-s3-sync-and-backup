@@ -23,6 +23,7 @@
 import { Plugin } from 'obsidian';
 import { SyncEngine } from './SyncEngine';
 import { S3SyncBackupSettings, SyncResult } from '../types';
+import type { EncryptionCoordinator } from '../crypto/EncryptionCoordinator';
 
 /**
  * Drives periodic vault synchronisation by wrapping `window.setInterval` in
@@ -53,6 +54,9 @@ export class SyncScheduler {
     private intervalId: number | null = null;
     private isEnabled = false;
     private isPaused = false;
+
+    /** Optional encryption coordinator for preflight blocking checks. */
+    private encryptionCoordinator: EncryptionCoordinator | null = null;
 
     // Callback for status updates
     private onSyncStart?: () => void;
@@ -98,6 +102,13 @@ export class SyncScheduler {
         this.onSyncStart = callbacks.onSyncStart;
         this.onSyncComplete = callbacks.onSyncComplete;
         this.onSyncError = callbacks.onSyncError;
+    }
+
+    /**
+     * Set the encryption coordinator for preflight blocking checks.
+     */
+    setEncryptionCoordinator(coordinator: EncryptionCoordinator): void {
+        this.encryptionCoordinator = coordinator;
     }
 
     /**
@@ -247,6 +258,14 @@ export class SyncScheduler {
         if (this.syncEngine.isInProgress()) {
             if (this.settings.debugLogging) {
                 console.debug('[S3 Sync] Skipping - sync already in progress');
+            }
+            return null;
+        }
+
+        // Block scheduled/startup syncs when encryption state prevents safe operation
+        if (this.encryptionCoordinator?.shouldBlock()) {
+            if (this.settings.debugLogging) {
+                console.debug(`[S3 Sync] Skipping - ${this.encryptionCoordinator.getBlockReason()}`);
             }
             return null;
         }
