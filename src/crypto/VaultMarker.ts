@@ -8,7 +8,7 @@
 
 import { App } from 'obsidian';
 import { S3Provider } from '../storage/S3Provider';
-import { VaultEncryptionMarker } from '../types';
+import { EncryptionMarkerState, VaultEncryptionMarker } from '../types';
 import { deriveKey, bytesToBase64, base64ToBytes, generateSalt } from './KeyDerivation';
 import { encrypt, decrypt } from './FileEncryptor';
 
@@ -69,13 +69,19 @@ export class VaultMarker {
         const tokenBytes = new TextEncoder().encode(VERIFICATION_TOKEN);
         const encryptedToken = encrypt(tokenBytes, key);
 
-        // Create marker object
+        const now = new Date().toISOString();
+
+        // Create marker with 'enabling' state — caller must flip to 'enabled'
+        // after all files have been re-uploaded encrypted.
         const marker: VaultEncryptionMarker = {
-            version: 1,
+            version: 2,
             salt: bytesToBase64(salt),
             verificationToken: bytesToBase64(encryptedToken),
-            createdAt: new Date().toISOString(),
+            state: 'enabling',
+            createdAt: now,
             createdBy: deviceId,
+            updatedAt: now,
+            updatedBy: deviceId,
         };
 
         // Upload marker to S3
@@ -127,16 +133,44 @@ export class VaultMarker {
             const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
             const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
 
-            // Return metadata without sensitive fields
             return {
                 version: marker.version,
                 salt: marker.salt,
+                state: marker.state ?? 'enabled',
                 createdAt: marker.createdAt,
                 createdBy: marker.createdBy,
+                updatedAt: marker.updatedAt ?? marker.createdAt,
+                updatedBy: marker.updatedBy ?? marker.createdBy,
             };
         } catch {
             return null;
         }
+    }
+
+    /**
+     * Update the marker's state field without re-deriving the key.
+     *
+     * Used to transition between `enabling` → `enabled` after migration completes,
+     * or to set `disabling` before the decrypt-and-reupload migration starts.
+     *
+     * @param newState - The target encryption state.
+     * @param deviceId - The device performing the state transition.
+     */
+    async updateState(newState: EncryptionMarkerState, deviceId: string): Promise<void> {
+        const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
+        const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
+
+        marker.state = newState;
+        marker.updatedAt = new Date().toISOString();
+        marker.updatedBy = deviceId;
+
+        // Bump version if still v1 (migration from old marker format)
+        if (marker.version < 2) {
+            marker.version = 2;
+        }
+
+        const updatedJson = JSON.stringify(marker, null, 2);
+        await this.s3Provider.uploadFile(this.getMarkerKey(), updatedJson, 'application/json');
     }
 
     /**

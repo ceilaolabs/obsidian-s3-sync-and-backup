@@ -23,6 +23,7 @@ import { SnapshotCreator } from './backup/SnapshotCreator';
 import { RetentionManager } from './backup/RetentionManager';
 import { BackupScheduler } from './backup/BackupScheduler';
 import { getOrCreateDeviceId } from './crypto/VaultMarker';
+import { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import { BackupResult } from './types';
 
 /**
@@ -68,6 +69,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 	/** Backup scheduler for periodic backups */
 	private backupScheduler: BackupScheduler | null = null;
+
+	/** Encryption coordinator — owns encryption state and key propagation */
+	private encryptionCoordinator: EncryptionCoordinator | null = null;
 
 	/** Device ID for sync and backup tracking */
 	private deviceId: string = '';
@@ -188,6 +192,23 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 		});
 
+		// Encryption coordinator — constructed after payloadCodec, snapshotCreator,
+		// and backupDownloader are available so it can propagate keys to all of them.
+		this.encryptionCoordinator = new EncryptionCoordinator(
+			this.app,
+			this.s3Provider,
+			this.payloadCodec,
+			this.pathCodec,
+			this.snapshotCreator,
+			this.backupDownloader,
+			this.settings,
+			this.deviceId,
+		);
+
+		// Wire coordinator into the sync scheduler so scheduled syncs are blocked
+		// when encryption state prevents safe operation.
+		this.syncScheduler.setEncryptionCoordinator(this.encryptionCoordinator);
+
 		this.updateStatusBarFromSettings();
 
 		// Settings tab
@@ -203,6 +224,16 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		// Start sync services if enabled
 		this.startSyncServices();
+
+		// Check remote encryption state on startup. If the vault is encrypted
+		// (marker exists in S3), auto-enable locally and block sync/backup until
+		// the user provides the passphrase in settings. This handles multi-device
+		// detection: device A enables encryption → device B detects on startup.
+		if (this.s3Provider && this.encryptionCoordinator) {
+			this.app.workspace.onLayoutReady(() => {
+				void this.checkEncryptionOnStartup();
+			});
+		}
 
 		// Startup sync is deferred until workspace layout is ready so that Obsidian has
 		// finished restoring open tabs and the vault index is fully populated. Triggering
@@ -281,6 +312,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 		if (this.backupScheduler) {
 			this.backupScheduler.updateSettings(this.settings);
 		}
+
+		if (this.changeTracker) {
+			this.changeTracker.updateExcludePatterns(this.settings.excludePatterns);
+		}
+
+		if (this.encryptionCoordinator) {
+			this.encryptionCoordinator.updateSettings(this.settings);
+		}
 	}
 
 	/**
@@ -296,9 +335,37 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Called when the user provides or changes their passphrase.
 	 *
 	 * @param key - Derived encryption key, or null to disable encryption.
+	 * @deprecated Use EncryptionCoordinator instead. Kept for backwards compatibility.
 	 */
 	updateEncryptionKey(key: Uint8Array | null): void {
 		this.payloadCodec?.updateKey(key);
+	}
+
+	/**
+	 * Check remote encryption state on startup and notify the user if
+	 * the vault is encrypted but no passphrase has been provided yet.
+	 */
+	private async checkEncryptionOnStartup(): Promise<void> {
+		if (!this.encryptionCoordinator) return;
+
+		await this.encryptionCoordinator.refreshRemoteMode(
+			async () => { await this.saveSettings(); },
+		);
+
+		const state = this.encryptionCoordinator.getState();
+
+		if (state.remoteMode === 'encrypted' && !state.hasKey) {
+			new Notice('Vault is encrypted — enter passphrase in settings to unlock sync and backup', 10000);
+		} else if (state.remoteMode === 'transitioning') {
+			new Notice('Encryption migration in progress on another device — sync and backup paused', 10000);
+		}
+	}
+
+	/**
+	 * Get the encryption coordinator for use by the settings tab.
+	 */
+	getEncryptionCoordinator(): EncryptionCoordinator | null {
+		return this.encryptionCoordinator;
 	}
 
 	/**
@@ -467,6 +534,18 @@ export default class S3SyncBackupPlugin extends Plugin {
 			return;
 		}
 
+		// Encryption preflight: refresh remote state and block if needed
+		if (this.encryptionCoordinator) {
+			await this.encryptionCoordinator.refreshRemoteMode(
+				async () => { await this.saveSettings(); },
+			);
+			const blockReason = this.encryptionCoordinator.getBlockReason();
+			if (blockReason) {
+				new Notice(`Sync blocked: ${blockReason}`);
+				return;
+			}
+		}
+
 		if (this.syncEngine?.isInProgress()) {
 			new Notice('Sync already in progress...');
 			return;
@@ -499,6 +578,13 @@ export default class S3SyncBackupPlugin extends Plugin {
 	async triggerManualBackup(): Promise<void> {
 		if (!this.settings.backupEnabled) {
 			new Notice('Backup is disabled. Enable it in settings.');
+			return;
+		}
+
+		// Encryption preflight: block backup if vault is encrypted but no key loaded
+		if (this.encryptionCoordinator?.shouldBlock()) {
+			const reason = this.encryptionCoordinator.getBlockReason();
+			new Notice(`Backup blocked: ${reason}`);
 			return;
 		}
 
@@ -550,6 +636,14 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		if (!this.snapshotCreator || !this.s3Provider) {
 			console.error('[S3 Backup] Backup system not initialized');
+			return null;
+		}
+
+		// Block scheduled backups when encryption state prevents safe operation
+		if (this.encryptionCoordinator?.shouldBlock()) {
+			if (this.settings.debugLogging) {
+				console.debug(`[S3 Backup] Skipping - ${this.encryptionCoordinator.getBlockReason()}`);
+			}
 			return null;
 		}
 
