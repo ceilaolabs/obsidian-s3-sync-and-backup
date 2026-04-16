@@ -33,6 +33,18 @@ export class SyncEngine {
 	private isSyncing = false;
 	private debugLogging: boolean;
 
+	/**
+	 * @param app           - The Obsidian App instance (vault, fileManager, etc.).
+	 * @param s3Provider    - S3 abstraction layer; constructed from current settings.
+	 * @param journal       - IndexedDB journal for per-file baseline persistence.
+	 * @param pathCodec     - Converts vault-relative paths ↔ S3 object keys.
+	 * @param payloadCodec  - Handles optional encryption of file content.
+	 * @param changeTracker - Dirty-path tracker; suppressed during active syncs.
+	 * @param settings      - Full plugin settings snapshot used to configure
+	 *   the planner (e.g. exclude patterns, sync prefix) and executor (debug logging).
+	 * @param deviceId      - Stable per-device identifier embedded in S3 metadata
+	 *   so other devices can attribute the last write.
+	 */
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
@@ -116,7 +128,10 @@ export class SyncEngine {
 			this.log(`Sync completed with ${result.errors.length} error(s)`);
 			return result;
 		} catch (error) {
-			// Unexpected top-level failure — wrap it as a SyncResult
+			// Unexpected top-level failure (e.g. SyncPlanner threw, network
+			// unavailable before any item started).  Wrap as a SyncResult so
+			// callers always receive a uniform return type and can surface the
+			// error via the status bar without crashing the plugin.
 			const message = error instanceof Error ? error.message : 'Unknown error';
 			console.error(`[S3 Sync] Sync failed: ${message}`);
 
