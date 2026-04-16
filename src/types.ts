@@ -573,23 +573,79 @@ export interface DeviceInfo {
 // =============================================================================
 
 /**
+ * Encryption marker transition state.
+ *
+ * - `enabled`   — encryption is fully active; all files in S3 are encrypted.
+ * - `enabling`  — migration in progress: re-uploading plaintext files as encrypted.
+ *                 All devices must block sync/backup until migration completes.
+ * - `disabling` — migration in progress: re-uploading encrypted files as plaintext.
+ *                 All devices must block sync/backup until migration completes.
+ *
+ * When the marker file is **absent**, the vault is treated as plaintext (no encryption).
+ */
+export type EncryptionMarkerState = 'enabled' | 'enabling' | 'disabling';
+
+/**
  * Vault encryption marker file structure.
  *
- * Stored at `{syncPrefix}/.obsidian-s3-sync/.vault.enc` in S3. Written once when
- * encryption is first enabled. On subsequent sessions, this file is read to verify
- * the passphrase (by decrypting `verificationToken`) and to obtain the Argon2id salt
- * needed to re-derive the encryption key. If the file is missing, the bucket is
- * treated as unencrypted.
+ * Stored at `{syncPrefix}/.obsidian-s3-sync/.vault.enc` in S3. Written when
+ * encryption is first enabled (state = `enabling`), then flipped to `enabled`
+ * after all files have been re-uploaded encrypted. On subsequent sessions, this
+ * file is read to verify the passphrase (by decrypting `verificationToken`) and
+ * to obtain the Argon2id salt needed to re-derive the encryption key.
+ *
+ * If the file is missing, the bucket is treated as unencrypted.
  */
 export interface VaultEncryptionMarker {
-	/** Marker schema version (currently 1). */
+	/** Marker schema version (currently 2 — added `state`, `updatedAt`, `updatedBy`). */
 	version: number;
 	/** Random 32-byte salt for Argon2id (base64 encoded). Generated once per vault. */
 	salt: string;
 	/** Encrypted verification token to validate the passphrase without storing the key. */
 	verificationToken: string;
-	/** ISO 8601 timestamp when encryption was set up on this vault. */
+	/**
+	 * Current encryption state of the vault.
+	 *
+	 * - `enabling`  — migration from plaintext → encrypted is in progress.
+	 * - `enabled`   — all files are encrypted; normal sync/backup may proceed.
+	 * - `disabling` — migration from encrypted → plaintext is in progress.
+	 *
+	 * During `enabling` or `disabling`, ALL devices must block sync and backup
+	 * until the migration completes and the state transitions to `enabled` or
+	 * the marker is deleted.
+	 */
+	state: EncryptionMarkerState;
+	/** ISO 8601 timestamp when encryption was first set up on this vault. */
 	createdAt: string;
 	/** Device ID of the device that initially enabled encryption. */
 	createdBy: string;
+	/** ISO 8601 timestamp of the last state change (enable, disable, migration complete). */
+	updatedAt: string;
+	/** Device ID of the device that last modified the marker state. */
+	updatedBy: string;
+}
+
+/**
+ * Remote encryption mode as detected by the EncryptionCoordinator.
+ *
+ * Derived from the presence and state of the vault marker in S3:
+ * - `plaintext`    — no marker file exists; vault is unencrypted.
+ * - `encrypted`    — marker exists with `state: 'enabled'`.
+ * - `transitioning` — marker exists with `state: 'enabling'` or `'disabling'`.
+ */
+export type RemoteEncryptionMode = 'plaintext' | 'encrypted' | 'transitioning';
+
+/**
+ * Runtime encryption state exposed by EncryptionCoordinator.
+ *
+ * Used by the settings UI to derive its display state and by sync/backup
+ * guards to determine whether operations should be blocked.
+ */
+export interface EncryptionRuntimeState {
+	/** Current remote mode derived from the vault marker in S3. */
+	remoteMode: RemoteEncryptionMode;
+	/** Whether a derived encryption key is currently loaded in memory. */
+	hasKey: boolean;
+	/** Whether a migration (enable/disable) is currently in progress on this device. */
+	isBusy: boolean;
 }
