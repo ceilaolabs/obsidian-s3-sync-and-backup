@@ -313,6 +313,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 			this.backupScheduler.updateSettings(this.settings);
 		}
 
+		if (this.changeTracker) {
+			this.changeTracker.updateExcludePatterns(this.settings.excludePatterns);
+		}
+
 		if (this.encryptionCoordinator) {
 			this.encryptionCoordinator.updateSettings(this.settings);
 		}
