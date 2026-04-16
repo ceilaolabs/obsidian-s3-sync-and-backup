@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.0.0...3.1.0) (2026-04-16)
+
+
+### Features
+
+* updates to encryption and documentation ([f1d7024](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/f1d702450d3485d4e3774bff5fc145a77cb49078))
+
 ## [3.0.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/2.0.0...3.0.0) (2026-04-16)
 
 
