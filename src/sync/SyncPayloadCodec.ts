@@ -13,6 +13,7 @@
 
 import { encrypt, decrypt } from '../crypto/FileEncryptor';
 import { hashContent } from '../crypto/Hasher';
+import { PayloadFormat } from '../types';
 
 /**
  * Applies encryption and content hashing to file payloads traversing the
@@ -50,6 +51,14 @@ export class SyncPayloadCodec {
 	 */
 	get isEncryptionEnabled(): boolean {
 		return this.encryptionKey !== null;
+	}
+
+	/**
+	 * Returns the payload format that uploads should be tagged with based on
+	 * whether an encryption key is currently loaded.
+	 */
+	getActivePayloadFormat(): PayloadFormat {
+		return this.encryptionKey ? 'xsalsa20poly1305-v1' : 'plaintext-v1';
 	}
 
 	/**
@@ -110,20 +119,30 @@ export class SyncPayloadCodec {
 	/**
 	 * Decodes raw bytes downloaded from S3 back to their plaintext form.
 	 *
-	 * In plaintext mode, the payload is returned unchanged.  In encrypted
-	 * mode, the bytes are decrypted with XSalsa20-Poly1305 using the active
-	 * encryption key.
+	 * Uses the `payloadFormat` metadata tag to determine whether decryption is
+	 * needed. This is the **definitive** decode path — it never guesses from
+	 * content bytes.
 	 *
-	 * @param payload - The raw bytes as received from S3.
+	 * - `plaintext-v1` or absent → return bytes unchanged.
+	 * - `xsalsa20poly1305-v1`    → decrypt with the active encryption key.
+	 *
+	 * @param payload       - The raw bytes as received from S3.
+	 * @param payloadFormat - The `obsidian-payload-format` metadata value from S3.
+	 *   Absent/undefined is treated as `plaintext-v1` for backward compatibility.
 	 * @returns The decrypted (or unchanged) plaintext bytes.
-	 * @throws If decryption fails (e.g. wrong key or corrupted payload),
-	 *   the underlying `FileEncryptor.decrypt` will throw.
+	 * @throws If the format indicates encryption but no key is loaded.
+	 * @throws If decryption fails (wrong key or corrupted payload).
 	 */
-	decodeAfterDownload(payload: Uint8Array): Uint8Array {
-		if (!this.encryptionKey) {
+	decodeAfterDownload(payload: Uint8Array, payloadFormat?: PayloadFormat): Uint8Array {
+		const format = payloadFormat ?? 'plaintext-v1';
+
+		if (format === 'plaintext-v1') {
 			return payload;
 		}
 
+		if (!this.encryptionKey) {
+			throw new Error('Cannot decrypt: no encryption key loaded but payload format is xsalsa20poly1305-v1');
+		}
 		return decrypt(payload, this.encryptionKey);
 	}
 
@@ -138,8 +157,8 @@ export class SyncPayloadCodec {
 	 * @returns The decoded plaintext as a UTF-8 string.
 	 * @throws If decryption fails, propagates the error from `decodeAfterDownload`.
 	 */
-	decodeToString(payload: Uint8Array): string {
-		const bytes = this.decodeAfterDownload(payload);
+	decodeToString(payload: Uint8Array, payloadFormat?: PayloadFormat): string {
+		const bytes = this.decodeAfterDownload(payload, payloadFormat);
 		return new TextDecoder().decode(bytes);
 	}
 }
