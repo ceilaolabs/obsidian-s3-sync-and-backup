@@ -11,7 +11,7 @@
  * rather than `x-amz-meta-obsidian-mtime`).
  */
 
-import { SyncUploadMetadata } from '../types';
+import { PayloadFormat, SyncUploadMetadata } from '../types';
 
 /**
  * Current sync metadata schema version written to every uploaded object.
@@ -59,6 +59,15 @@ const KEY_MTIME = 'obsidian-mtime';
 const KEY_DEVICE_ID = 'obsidian-device-id';
 
 /**
+ * S3 metadata key that stores the payload format of the uploaded bytes.
+ *
+ * Indicates whether the object is plaintext or encrypted, and which encryption
+ * scheme was used. This is the **definitive** way to determine if decryption is
+ * needed after download — never guess from content bytes.
+ */
+const KEY_PAYLOAD_FORMAT = 'obsidian-payload-format';
+
+/**
  * Serialises a `SyncUploadMetadata` record into the flat string dictionary
  * that the AWS SDK accepts as S3 custom metadata.
  *
@@ -76,6 +85,7 @@ export function encodeMetadata(meta: SyncUploadMetadata): Record<string, string>
 		[KEY_FINGERPRINT]: meta.fingerprint,
 		[KEY_MTIME]: String(meta.clientMtime),
 		[KEY_DEVICE_ID]: meta.deviceId,
+		[KEY_PAYLOAD_FORMAT]: meta.payloadFormat,
 	};
 }
 
@@ -110,6 +120,12 @@ export interface DecodedSyncMetadata {
 	 * Enables optimistic local-wins decisions for self-uploaded files.
 	 */
 	deviceId?: string;
+
+	/**
+	 * Payload format tag indicating how the object bytes are encoded.
+	 * Absent for objects uploaded before this metadata was introduced (treated as plaintext).
+	 */
+	payloadFormat?: PayloadFormat;
 }
 
 /**
@@ -160,6 +176,11 @@ export function decodeMetadata(raw: Record<string, string> | undefined): Decoded
 	const deviceId = raw[KEY_DEVICE_ID];
 	if (deviceId !== undefined) {
 		result.deviceId = deviceId;
+	}
+
+	const payloadFormat = raw[KEY_PAYLOAD_FORMAT];
+	if (payloadFormat === 'plaintext-v1' || payloadFormat === 'xsalsa20poly1305-v1') {
+		result.payloadFormat = payloadFormat;
 	}
 
 	return result;

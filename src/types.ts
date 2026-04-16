@@ -359,6 +359,8 @@ export interface S3HeadResult {
 	clientMtime?: number;
 	/** Custom metadata: obsidian-device-id */
 	deviceId?: string;
+	/** Custom metadata: obsidian-payload-format — how the file bytes are encoded in S3. */
+	payloadFormat?: PayloadFormat;
 }
 
 /**
@@ -381,6 +383,8 @@ export interface S3DownloadResult {
 	clientMtime?: number;
 	/** Custom metadata: obsidian-device-id */
 	deviceId?: string;
+	/** Custom metadata: obsidian-payload-format */
+	payloadFormat?: PayloadFormat;
 }
 
 /**
@@ -393,6 +397,8 @@ export interface SyncUploadMetadata {
 	clientMtime: number;
 	/** Device ID performing the upload */
 	deviceId: string;
+	/** Payload format of the uploaded bytes (plaintext or encrypted) */
+	payloadFormat: PayloadFormat;
 }
 
 // =============================================================================
@@ -573,17 +579,32 @@ export interface DeviceInfo {
 // =============================================================================
 
 /**
+ * Payload format tag stored in S3 custom metadata on every synced object.
+ *
+ * This is the **definitive** indicator of how a file's bytes are encoded in S3.
+ * The sync engine reads this tag (via `obsidian-payload-format` metadata key)
+ * to decide whether to decrypt after download and how to encode before upload.
+ *
+ * - `plaintext-v1`          — raw vault content, no transformation applied.
+ * - `xsalsa20poly1305-v1`   — encrypted with XSalsa20-Poly1305 (tweetnacl).
+ *                              Wire format: `[24-byte nonce][ciphertext + 16-byte tag]`.
+ *
+ * Objects uploaded before this metadata was introduced will have no
+ * `obsidian-payload-format` key; the codec treats absent format as `plaintext-v1`.
+ */
+export type PayloadFormat = 'plaintext-v1' | 'xsalsa20poly1305-v1';
+
+/**
  * Encryption marker transition state.
  *
- * - `enabled`   — encryption is fully active; all files in S3 are encrypted.
- * - `enabling`  — migration in progress: re-uploading plaintext files as encrypted.
- *                 All devices must block sync/backup until migration completes.
- * - `disabling` — migration in progress: re-uploading encrypted files as plaintext.
- *                 All devices must block sync/backup until migration completes.
+ * - `enabled`       — encryption is fully active; all files in S3 are encrypted.
+ * - `transitioning` — a migration is in progress (enable OR disable). The direction
+ *                     is recorded in the marker's `fromMode` / `targetMode` fields.
+ *                     All devices MUST block sync/backup until migration completes.
  *
  * When the marker file is **absent**, the vault is treated as plaintext (no encryption).
  */
-export type EncryptionMarkerState = 'enabled' | 'enabling' | 'disabling';
+export type EncryptionMarkerState = 'enabled' | 'transitioning';
 
 /**
  * Vault encryption marker file structure.
@@ -597,7 +618,7 @@ export type EncryptionMarkerState = 'enabled' | 'enabling' | 'disabling';
  * If the file is missing, the bucket is treated as unencrypted.
  */
 export interface VaultEncryptionMarker {
-	/** Marker schema version (currently 2 — added `state`, `updatedAt`, `updatedBy`). */
+	/** Marker schema version. Version 3 adds `fromMode`, `targetMode`, `migrationId`. */
 	version: number;
 	/** Random 32-byte salt for Argon2id (base64 encoded). Generated once per vault. */
 	salt: string;
@@ -606,15 +627,30 @@ export interface VaultEncryptionMarker {
 	/**
 	 * Current encryption state of the vault.
 	 *
-	 * - `enabling`  — migration from plaintext → encrypted is in progress.
-	 * - `enabled`   — all files are encrypted; normal sync/backup may proceed.
-	 * - `disabling` — migration from encrypted → plaintext is in progress.
+	 * - `enabled`       — all files are encrypted; normal sync/backup may proceed.
+	 * - `transitioning` — migration in progress. Direction given by `fromMode`/`targetMode`.
 	 *
-	 * During `enabling` or `disabling`, ALL devices must block sync and backup
-	 * until the migration completes and the state transitions to `enabled` or
-	 * the marker is deleted.
+	 * During `transitioning`, ALL devices MUST block sync and backup until the
+	 * migration completes (state flips to `enabled` or marker is deleted).
 	 */
 	state: EncryptionMarkerState;
+	/**
+	 * Source payload format before migration started.
+	 * Only present when `state === 'transitioning'`.
+	 */
+	fromMode?: PayloadFormat;
+	/**
+	 * Target payload format the migration is moving towards.
+	 * Only present when `state === 'transitioning'`.
+	 */
+	targetMode?: PayloadFormat;
+	/**
+	 * Unique ID for this migration run (UUID v4).
+	 * Allows resume detection: if a device sees the same `migrationId` it started,
+	 * it can safely resume; otherwise another device owns the migration.
+	 * Only present when `state === 'transitioning'`.
+	 */
+	migrationId?: string;
 	/** ISO 8601 timestamp when encryption was first set up on this vault. */
 	createdAt: string;
 	/** Device ID of the device that initially enabled encryption. */
