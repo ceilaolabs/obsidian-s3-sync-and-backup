@@ -739,4 +739,24 @@ export default class S3SyncBackupPlugin extends Plugin {
 	getSyncJournal(): SyncJournal | null {
 		return this.syncJournal;
 	}
+
+	/**
+	 * Build the callbacks object needed by {@link EncryptionCoordinator} for
+	 * enable/disable encryption flows that need to pause schedulers and save settings.
+	 */
+	getEncryptionCallbacks(): import('./crypto/EncryptionCoordinator').EncryptionCoordinatorCallbacks {
+		return {
+			saveSettings: () => this.saveSettings(),
+			pauseSchedulers: () => {
+				this.syncScheduler?.pause();
+				this.backupScheduler?.stop();
+			},
+			resumeSchedulers: () => {
+				this.syncScheduler?.resume();
+				if (this.settings.backupEnabled) {
+					void this.backupScheduler?.start();
+				}
+			},
+		};
+	}
 }

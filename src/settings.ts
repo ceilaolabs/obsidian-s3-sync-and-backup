@@ -394,7 +394,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						button.setDisabled(true);
 
 						const result = await coordinator?.disableEncryption(
-							async () => { await this.plugin.saveSettings(); },
+							this.plugin.getEncryptionCallbacks(),
 						);
 
 						if (result?.success) {
@@ -471,7 +471,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 						const result = await coordinator?.enableEncryption(
 							passphraseValue,
-							async () => { await this.plugin.saveSettings(); },
+							this.plugin.getEncryptionCallbacks(),
 						);
 
 						if (result?.success) {
