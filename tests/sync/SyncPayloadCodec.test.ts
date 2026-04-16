@@ -45,6 +45,20 @@ describe('SyncPayloadCodec', () => {
 		});
 	});
 
+	describe('getActivePayloadFormat', () => {
+		it('returns plaintext-v1 when no key is loaded', () => {
+			const codec = new SyncPayloadCodec(null);
+
+			expect(codec.getActivePayloadFormat()).toBe('plaintext-v1');
+		});
+
+		it('returns xsalsa20poly1305-v1 when a key is loaded', () => {
+			const codec = new SyncPayloadCodec(key);
+
+			expect(codec.getActivePayloadFormat()).toBe('xsalsa20poly1305-v1');
+		});
+	});
+
 	describe('fingerprint', () => {
 		it('returns a sha256-prefixed fingerprint for string input', async () => {
 			mockedHashContent.mockResolvedValue('abc123');
@@ -105,7 +119,7 @@ describe('SyncPayloadCodec', () => {
 			mockedDecrypt.mockReturnValue(decryptedPayload);
 			const codec = new SyncPayloadCodec(key);
 
-			expect(codec.decodeAfterDownload(payload)).toBe(decryptedPayload);
+			expect(codec.decodeAfterDownload(payload, 'xsalsa20poly1305-v1')).toBe(decryptedPayload);
 			expect(mockedDecrypt).toHaveBeenCalledWith(payload, key);
 		});
 	});
@@ -124,7 +138,7 @@ describe('SyncPayloadCodec', () => {
 
 			codec.updateKey(differentKey);
 
-			expect(codec.decodeToString(Uint8Array.from([3, 2, 1]))).toBe(decoder.decode(decryptedPayload));
+			expect(codec.decodeToString(Uint8Array.from([3, 2, 1]), 'xsalsa20poly1305-v1')).toBe(decoder.decode(decryptedPayload));
 			expect(mockedDecrypt).toHaveBeenCalledWith(Uint8Array.from([3, 2, 1]), differentKey);
 		});
 	});

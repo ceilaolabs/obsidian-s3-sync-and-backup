@@ -36,7 +36,7 @@ import {
     DeleteObjectsCommand,
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
-import { S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
+import { PayloadFormat, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
 import { buildS3ClientConfig, validateConnectionSettings } from './S3Config';
 
 /**
@@ -424,6 +424,7 @@ export class S3Provider {
             fingerprint: metadata['obsidian-fingerprint'],
             clientMtime: this.parseMetadataNumber(metadata['obsidian-mtime']),
             deviceId: metadata['obsidian-device-id'],
+            payloadFormat: this.parsePayloadFormat(metadata['obsidian-payload-format']),
         };
     }
 
@@ -444,6 +445,17 @@ export class S3Provider {
 
         const parsed = parseInt(value, 10);
         return Number.isNaN(parsed) ? undefined : parsed;
+    }
+
+    /**
+     * Parse an S3 metadata value as a {@link PayloadFormat}, returning
+     * `undefined` for absent or unrecognised values.
+     */
+    private parsePayloadFormat(value?: string): PayloadFormat | undefined {
+        if (value === 'plaintext-v1' || value === 'xsalsa20poly1305-v1') {
+            return value;
+        }
+        return undefined;
     }
 
     /**

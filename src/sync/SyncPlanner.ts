@@ -365,7 +365,7 @@ export class SyncPlanner {
 		const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
 		if (!downloaded) return;
 
-		const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content);
+		const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content, downloaded.payloadFormat);
 		ctx.remoteFingerprint = await this.payloadCodec.fingerprint(plaintext);
 	}
 

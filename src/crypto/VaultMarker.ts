@@ -8,7 +8,7 @@
 
 import { App } from 'obsidian';
 import { S3Provider } from '../storage/S3Provider';
-import { EncryptionMarkerState, VaultEncryptionMarker } from '../types';
+import { EncryptionMarkerState, PayloadFormat, VaultEncryptionMarker } from '../types';
 import { deriveKey, bytesToBase64, base64ToBytes, generateSalt } from './KeyDerivation';
 import { encrypt, decrypt } from './FileEncryptor';
 
@@ -71,13 +71,16 @@ export class VaultMarker {
 
         const now = new Date().toISOString();
 
-        // Create marker with 'enabling' state — caller must flip to 'enabled'
+        // Create marker with 'transitioning' state — caller must flip to 'enabled'
         // after all files have been re-uploaded encrypted.
         const marker: VaultEncryptionMarker = {
-            version: 2,
+            version: 3,
             salt: bytesToBase64(salt),
             verificationToken: bytesToBase64(encryptedToken),
-            state: 'enabling',
+            state: 'transitioning',
+            fromMode: 'plaintext-v1',
+            targetMode: 'xsalsa20poly1305-v1',
+            migrationId: crypto.randomUUID(),
             createdAt: now,
             createdBy: deviceId,
             updatedAt: now,
@@ -137,6 +140,9 @@ export class VaultMarker {
                 version: marker.version,
                 salt: marker.salt,
                 state: marker.state ?? 'enabled',
+                fromMode: marker.fromMode,
+                targetMode: marker.targetMode,
+                migrationId: marker.migrationId,
                 createdAt: marker.createdAt,
                 createdBy: marker.createdBy,
                 updatedAt: marker.updatedAt ?? marker.createdAt,
@@ -150,13 +156,19 @@ export class VaultMarker {
     /**
      * Update the marker's state field without re-deriving the key.
      *
-     * Used to transition between `enabling` → `enabled` after migration completes,
-     * or to set `disabling` before the decrypt-and-reupload migration starts.
+     * When transitioning to `'transitioning'`, `fromMode` and `targetMode` must be
+     * provided. When transitioning to `'enabled'`, the migration fields are cleared.
      *
-     * @param newState - The target encryption state.
-     * @param deviceId - The device performing the state transition.
+     * @param newState  - The target encryption state.
+     * @param deviceId  - The device performing the state transition.
+     * @param migration - Required when `newState === 'transitioning'`: the source and
+     *   target payload formats plus a unique migration ID for resume detection.
      */
-    async updateState(newState: EncryptionMarkerState, deviceId: string): Promise<void> {
+    async updateState(
+        newState: EncryptionMarkerState,
+        deviceId: string,
+        migration?: { fromMode: PayloadFormat; targetMode: PayloadFormat; migrationId: string },
+    ): Promise<void> {
         const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
         const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
 
@@ -164,9 +176,18 @@ export class VaultMarker {
         marker.updatedAt = new Date().toISOString();
         marker.updatedBy = deviceId;
 
-        // Bump version if still v1 (migration from old marker format)
-        if (marker.version < 2) {
-            marker.version = 2;
+        if (newState === 'transitioning' && migration) {
+            marker.fromMode = migration.fromMode;
+            marker.targetMode = migration.targetMode;
+            marker.migrationId = migration.migrationId;
+        } else if (newState === 'enabled') {
+            delete marker.fromMode;
+            delete marker.targetMode;
+            delete marker.migrationId;
+        }
+
+        if (marker.version < 3) {
+            marker.version = 3;
         }
 
         const updatedJson = JSON.stringify(marker, null, 2);

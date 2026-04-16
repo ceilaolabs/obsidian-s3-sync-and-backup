@@ -123,7 +123,8 @@ interface MockPathCodec {
 interface MockPayloadCodec {
 	fingerprint: jest.Mock<Promise<string>, [string | Uint8Array]>;
 	encodeForUpload: jest.Mock<Uint8Array, [string | Uint8Array]>;
-	decodeAfterDownload: jest.Mock<Uint8Array, [Uint8Array]>;
+	decodeAfterDownload: jest.Mock<Uint8Array, [Uint8Array, undefined?]>;
+	getActivePayloadFormat: jest.Mock<string, []>;
 }
 
 interface MockChangeTracker {
@@ -327,6 +328,7 @@ function createExecutorContext(debugLogging = false): ExecutorContext {
 		fingerprint: jest.fn().mockResolvedValue('fingerprint-1'),
 		encodeForUpload: jest.fn<Uint8Array, [string | Uint8Array]>((_content) => new Uint8Array([9, 8, 7])),
 		decodeAfterDownload: jest.fn((content: Uint8Array) => content),
+		getActivePayloadFormat: jest.fn().mockReturnValue('plaintext-v1'),
 	};
 
 	const changeTracker: MockChangeTracker = {
@@ -697,6 +699,7 @@ describe('SyncExecutor', () => {
 				fingerprint: 'upload-fingerprint',
 				clientMtime: 444,
 				deviceId: 'device-123',
+				payloadFormat: 'plaintext-v1',
 			});
 			expect(s3Provider.uploadFile).toHaveBeenCalledWith('remote/notes/test.md', new Uint8Array([4, 5, 6]), {
 				contentType: 'text/plain; charset=utf-8',
@@ -756,7 +759,7 @@ describe('SyncExecutor', () => {
 			await internals.executeDownload(createPlanItem('download'));
 
 			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('remote/notes/test.md');
-			expect(payloadCodec.decodeAfterDownload).toHaveBeenCalledWith(new Uint8Array([9, 9]));
+			expect(payloadCodec.decodeAfterDownload).toHaveBeenCalledWith(new Uint8Array([9, 9]), undefined);
 			expect(writeSpy).toHaveBeenCalledWith('notes/test.md', 'hello world');
 			expect(mockedSleep).toHaveBeenCalledWith(0);
 			expect(payloadCodec.fingerprint).toHaveBeenCalledWith('hello world');
@@ -888,6 +891,7 @@ describe('SyncExecutor', () => {
 
 			await internals.executeConflict(createPlanItem('conflict', { conflictMode: 'both' }));
 
+			expect(payloadCodec.decodeAfterDownload).toHaveBeenCalledWith(new Uint8Array([1, 1]), undefined);
 			expect(app.vault.rename).toHaveBeenCalledWith(file, 'notes/LOCAL_test.md');
 			expect(writeSpy).toHaveBeenCalledWith('notes/REMOTE_test.md', 'remote body');
 			expect(journal.setConflict).toHaveBeenCalledWith(expect.objectContaining({

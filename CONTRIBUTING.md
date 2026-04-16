@@ -61,6 +61,26 @@ To test your changes in a live Obsidian instance:
     > **Tip:** You can symlink these files for faster iteration, but copying is safer to avoid file lock issues.
 5.  Reload Obsidian (`Cmd/Ctrl + R`) and enable the plugin in **Settings → Community plugins**.
 
+### Debug Logging
+
+The plugin has a built-in debug logging mode that outputs verbose logs to the browser console.
+
+1.  Enable **Debug logging** in **Settings → S3 Sync & Backup → Advanced**.
+2.  Open Obsidian DevTools: `Cmd+Option+I` (Mac) or `Ctrl+Shift+I` (Windows/Linux).
+3.  Go to the **Console** tab and filter by `[S3` to isolate plugin logs.
+
+All debug logs use `console.debug()` and are prefixed by module:
+
+| Prefix | Module |
+| :--- | :--- |
+| `[S3 Sync]` | Sync engine, scheduler, executor |
+| `[S3 Backup]` | Backup scheduler, snapshots, retention |
+| `[S3 Retry]` | S3 request retry attempts |
+| `[S3 HTTP]` | Raw S3 HTTP requests/responses (always on) |
+| `[Encryption]` | Encryption coordinator |
+
+> **Note:** `console.error()` calls (failures) are always emitted regardless of the debug toggle.
+
 ---
 
 ## Contribution Workflow

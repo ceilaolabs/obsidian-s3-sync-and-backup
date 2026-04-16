@@ -109,7 +109,11 @@ interface MockSyncPathCodec {
 
 interface MockSyncPayloadCodec {
 	fingerprint: jest.Mock<Promise<string>, [string | Uint8Array]>;
-	decodeAfterDownload: jest.Mock<Uint8Array, [Uint8Array]>;
+	decodeAfterDownload: jest.Mock<Uint8Array, [Uint8Array, undefined?]>;
+}
+
+interface VaultWithAddFile extends Vault {
+	_addFile(path: string, content: string): TFile;
 }
 
 function createSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBackupSettings {
@@ -182,7 +186,7 @@ function getPlannerPrivate(planner: SyncPlanner): SyncPlannerPrivate {
 
 describe('SyncPlanner', () => {
 	let app: App;
-	let vault: Vault;
+	let vault: VaultWithAddFile;
 	let settings: S3SyncBackupSettings;
 	let s3Provider: MockS3Provider;
 	let journal: MockSyncJournal;
@@ -217,7 +221,7 @@ describe('SyncPlanner', () => {
 		jest.clearAllMocks();
 
 		app = new App();
-		vault = new Vault();
+		vault = new Vault() as VaultWithAddFile;
 		app.vault = vault;
 
 		s3Provider = {
@@ -748,7 +752,7 @@ describe('SyncPlanner', () => {
 			expect(result).toBe('R=');
 			expect(s3Provider.headObject).toHaveBeenCalledWith('vault/fallback.md');
 			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('vault/fallback.md');
-			expect(payloadCodec.decodeAfterDownload).toHaveBeenCalledWith(downloaded.content);
+			expect(payloadCodec.decodeAfterDownload).toHaveBeenCalledWith(downloaded.content, undefined);
 			expect(payloadCodec.fingerprint).toHaveBeenCalledWith(decoded);
 		});
 	});
