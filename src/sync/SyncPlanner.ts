@@ -18,7 +18,7 @@ import {
 	SyncPlanItem,
 	SyncStateRecord,
 } from '../types';
-import { isConflictFile, matchesAnyGlob, getFilename } from '../utils/paths';
+import { isConflictFile, matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
@@ -472,6 +472,9 @@ export class SyncPlanner {
 	 */
 	private shouldExclude(path: string): boolean {
 		if (isConflictFile(path)) return true;
+
+		// Hardcoded: never sync the plugin's own settings directory
+		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;
 
 		const filename = getFilename(path);
 		if (filename.startsWith('.obsidian-s3-sync')) return true;

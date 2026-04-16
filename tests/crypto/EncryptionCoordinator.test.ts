@@ -139,6 +139,7 @@ describe('EncryptionCoordinator', () => {
 
 	const mockApp = {
 		vault: {
+			configDir: '.obsidian',
 			getFiles: jest.fn(),
 		},
 	} as unknown as App;
