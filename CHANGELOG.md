@@ -1,5 +1,65 @@
 # Changelog
 
+## [2.0.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.3...2.0.0) (2026-04-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sync:** Sync state schema changed from v1 manifest to v2 per-file baselines. No migration needed (plugin unpublished).
+
+### Features
+
+* add backup downloading and zip export functionality ([61c8776](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/61c8776cf8dff6b1e4015a48dcca47478d959723))
+* enhance S3 sync functionality with improved file tracking and metadata retrieval ([fbf8e92](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/fbf8e92632b7610754eec65a4009cdf682bc72f7))
+* implement backup scheduling and ETag tracking for S3 sync ([eb55251](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/eb5525150701a654e77e5eab9f65bde3d9373785))
+* implement rebasePendingOutcomes logic and add unit tests for SyncEngine ([3f6be85](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/3f6be859b70222f6cf49232df32374e3a09f94fe))
+* sync engine v2 ([6352917](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/6352917cccc0a5873154ad281d161e1b36891328))
+* **sync:** rebuild sync engine with v2 three-way reconciliation architecture ([5ed5e4d](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5ed5e4de2e3905651f7a420ea60f314bf772771a))
+
+
+### Bug Fixes
+
+* some fixes for sync issues ([58bfc0f](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/58bfc0f996a908f9f67324342e478d7a3b7b27d7))
+* **sync:** resolve 13 bugs in sync engine, change tracker, journal, and S3 provider ([afa072b](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/afa072b0e17ba7f67a68ce3464db4f774dfb494d))
+* unify deviceId to vault-scoped storage preventing cross-vault contamination ([5860fab](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5860fabfd9abf3156b76676ae3d2ce31975e67fa))
+* unify deviceId to vault-scoped storage preventing cross-vault contamination ([340ee74](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/340ee74b528ab95926190ab6e08f32ee22350cb0))
+* update release-please config to show hidden sections ([c600726](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/c600726ff4cd63994502c0112908f72a1a39f927))
+* update release-please config to show hidden sections for chore, test, and build ([1c1033e](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/1c1033e883ac628bea81a62919271b869b14c834))
+
+
+### Documentation
+
+* add comprehensive JSDoc to plugin core modules ([54239e3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/54239e33145d787cc8a0060603bce0f507694407))
+* **backup:** add comprehensive JSDoc to all backup modules ([6eb49ea](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/6eb49eaeb289edf2fda546c537f46918cc728b35))
+* rewrite AGENTS.md with v2 architecture and development workflow sections ([12ab81b](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/12ab81b678767141ef0ecd29907ea6f485f20884))
+* **storage:** add comprehensive JSDoc to all S3 storage modules ([18f3f79](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/18f3f79dcdc754dbae0c48e7fbe490cc42ac268c))
+* **sync:** add comprehensive JSDoc to all sync engine modules ([c70aeb9](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/c70aeb9e8367d8d4d2a8db446a816092cf9418d6))
+* update README and rewrite CONTRIBUTING for v2 sync engine ([5718d8f](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5718d8f9fdcac50fdfaff0e91417752e21d9bf04))
+* **utils:** add comprehensive JSDoc to path and vault file utilities ([0985b85](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/0985b858208a2c990bc48adb8ae45aad7a4ffa2b))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump flatted from 3.3.3 to 3.4.2 ([7f08511](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7f085116007ac0d0bb452f1538e2e62b7117b205))
+* **deps-dev:** bump flatted from 3.3.3 to 3.4.2 ([da68d62](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/da68d62adfd526cb93e752751852745dc120f83d))
+* **deps-dev:** bump handlebars from 4.7.8 to 4.7.9 ([fd1e88a](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/fd1e88a3c1be15e9c0507426fff72ca7dfb4b8bb))
+* **deps-dev:** bump handlebars from 4.7.8 to 4.7.9 ([8699b68](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/8699b68c5daafd8464e355c07f5bfbf700ceb9dd))
+* **deps-dev:** bump lodash from 4.17.21 to 4.18.1 ([5d6d1b6](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5d6d1b668e9e21a448fd0b5cf5322f5511d5787c))
+* **deps-dev:** bump lodash from 4.17.21 to 4.18.1 ([f8bfc30](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/f8bfc30c6d6b0418e145f6df5368a0cad1f574af))
+* **deps-dev:** bump picomatch from 2.3.1 to 2.3.2 ([773f10e](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/773f10e4cd1a656384333608fe1a90e691cb8865))
+* **deps-dev:** bump picomatch from 2.3.1 to 2.3.2 ([de969ca](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/de969ca943a2b916c60bdca93b219c693d726458))
+* **deps:** bump the npm_and_yarn group across 1 directory with 3 updates ([ffa1f14](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ffa1f14335cb216f6d4cf87ca9e94669ec53ae5c))
+* **deps:** bump the npm_and_yarn group across 1 directory with 3 updates ([7de9d45](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7de9d450d4b9c5f994c898c37f53e58185d5f409))
+* remove BLUEPRINT.md ([707fd9c](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/707fd9c0dc69c6693aa4de9fba248f5ff13d9ba1))
+
+
+### Tests
+
+* add comprehensive tests for bug fixes and coverage (375 tests, 87% coverage) ([0a55af4](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/0a55af4760131999ab213f914ebef22695f8c489))
+* **sync:** add unit tests for v2 decision table, journal, and change tracker ([2f4ed5a](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/2f4ed5a4b8aed082e531024c92059f8ed68b0869))
+* **sync:** add unit tests for v2 sync planner and executor ([e4ab606](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e4ab6068f9f287a4f1c2c8cbe3912d9c0c5c5216))
+* **sync:** replace v1 test files with v2 infrastructure module tests ([f8f80f9](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/f8f80f917e780565922d5037ef80b9a461ca15cc))
+
 ## [1.1.3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/1.1.2...1.1.3) (2025-12-29)
 
 
