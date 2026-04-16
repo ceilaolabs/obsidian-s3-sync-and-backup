@@ -13,10 +13,9 @@
  * ```
  *
  * ## Encryption
- * When `settings.encryptionEnabled` is `true` and an encryption key has been provided
- * via `setEncryptionKey()`, every file is encrypted with XSalsa20-Poly1305 before
- * upload. The manifest's `encrypted` flag reflects this so `BackupDownloader` knows
- * to decrypt on restore.
+ * When an encryption key has been provided via `setEncryptionKey()`, every file
+ * is encrypted with XSalsa20-Poly1305 before upload. The manifest's `encrypted`
+ * flag reflects this so `BackupDownloader` knows to decrypt on restore.
  *
  * ## Manifest
  * After all files are uploaded, a `.backup-manifest.json` is written containing
@@ -71,7 +70,7 @@ export class SnapshotCreator {
      * @param app - The Obsidian App instance. Used to enumerate vault files via
      *   `app.vault.getFiles()` and read their contents.
      * @param s3Provider - Configured S3 provider used for all upload operations.
-     * @param settings - Current plugin settings. `backupPrefix`, `encryptionEnabled`,
+     * @param settings - Current plugin settings. `backupPrefix`,
      *   `excludePatterns`, and `debugLogging` are all consumed here.
      */
     constructor(app: App, s3Provider: S3Provider, settings: S3SyncBackupSettings) {
@@ -84,8 +83,8 @@ export class SnapshotCreator {
     /**
      * Set or clear the encryption key used to encrypt backup files.
      *
-     * Must be called before `createSnapshot()` if `settings.encryptionEnabled` is
-     * `true`. Pass `null` to disable encryption (e.g., when the user removes their
+     * Must be called before `createSnapshot()` if encryption is active.
+     * Pass `null` to disable encryption (e.g., when the user removes their
      * passphrase).
      *
      * @param key - A 32-byte XSalsa20-Poly1305 encryption key derived from the user's
@@ -168,7 +167,7 @@ export class SnapshotCreator {
                 deviceName,
                 fileCount: result.filesBackedUp,
                 totalSize: result.totalSize,
-                encrypted: this.settings.encryptionEnabled && this.encryptionKey !== null,
+                encrypted: this.encryptionKey !== null,
                 checksums,
             };
 
@@ -243,7 +242,7 @@ export class SnapshotCreator {
         let uploadContent: Uint8Array | string = typeof content === 'string' ? content : contentBytes;
 
         // Encrypt if enabled
-        if (this.settings.encryptionEnabled && this.encryptionKey) {
+        if (this.encryptionKey) {
             uploadContent = encrypt(contentBytes, this.encryptionKey);
         }
 
@@ -259,7 +258,7 @@ export class SnapshotCreator {
      *
      * The manifest is stored at `{backupPrefix}/{backupName}/.backup-manifest.json` as
      * pretty-printed JSON with `Content-Type: application/json`. It is **never encrypted**
-     * regardless of `encryptionEnabled`, so backup metadata (file count, timestamps, etc.)
+     * regardless of encryption state, so backup metadata (file count, timestamps, etc.)
      * can always be read without the passphrase — e.g., by `RetentionManager` when
      * deciding which backups to delete.
      *
