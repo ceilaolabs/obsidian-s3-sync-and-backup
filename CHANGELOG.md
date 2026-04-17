@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.3.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.2.0...3.3.0) (2026-04-17)
+
+
+### Features
+
+* add skills and claude.md ([234f412](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/234f4128dc344395bc459c2b9940e4c5cb0c2492))
+
+
+### Bug Fixes
+
+* **settings:** enforce sentence case for UI text and remove unnecessary async ([e1cab13](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e1cab1338f603fd25df873d4e57b4bbdfd3e36ce))
+* suggestions by ObsidianReviewBot and adding agent skills ([0b8df34](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/0b8df34071818a5517e57dbe37f2fc79fb23fd7c))
+
+
+### Documentation
+
+* update AGENTS.md and add OBSIDIAN-PLUGIN-GUIDE.md ([e426d16](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e426d1634ecd8a987e6ce7edbb7f4380f69cd5ae))
+
 ## [3.2.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.1.2...3.2.0) (2026-04-17)
 
 
