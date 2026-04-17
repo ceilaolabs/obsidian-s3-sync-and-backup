@@ -5,6 +5,9 @@
  * modules against a live S3 bucket using the E2E harness' in-memory vault.
  */
 
+import JSZip from 'jszip';
+
+import { BackupDownloader } from '../../src/backup/BackupDownloader';
 import { BackupManifest } from '../../src/types';
 import { deriveKey } from '../../src/crypto/KeyDerivation';
 import {
@@ -79,6 +82,119 @@ describeIfS3('Backup workflow E2E', () => {
 	async function waitForNextBackupSecond(): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, 1100));
 	}
+
+	/**
+	 * Parse a generated backup ZIP blob for content assertions.
+	 */
+	async function loadZip(blob: Blob): Promise<JSZip> {
+		return JSZip.loadAsync(await blob.arrayBuffer());
+	}
+
+	/**
+	 * Read a text entry from a generated backup ZIP.
+	 */
+	async function readZipText(zip: JSZip, path: string): Promise<string> {
+		const file = zip.file(path);
+		if (!file) {
+			throw new Error(`Expected ZIP entry at ${path}`);
+		}
+
+		return file.async('string');
+	}
+
+	/**
+	 * Read a binary entry from a generated backup ZIP.
+	 */
+	async function readZipBytes(zip: JSZip, path: string): Promise<Uint8Array> {
+		const file = zip.file(path);
+		if (!file) {
+			throw new Error(`Expected ZIP entry at ${path}`);
+		}
+
+		return file.async('uint8array');
+	}
+
+	/**
+	 * Verifies backup discovery and download workflows against real S3 storage.
+	 */
+	describe('Backup discovery and download workflows', () => {
+		it('lists every created backup with manifest-derived metadata after multiple snapshots', async () => {
+			const device = await createInitializedDevice();
+			device.vault.seed('notes/first.md', 'first backup payload');
+
+			const first = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
+			await waitForNextBackupSecond();
+			device.vault.seed('notes/second.md', 'second backup payload');
+			device.vault.seed('assets/icon.bin', new Uint8Array([4, 8, 15, 16, 23, 42]));
+
+			const second = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
+			const backups = await device.retentionManager.listBackups();
+			const backupByName = new Map(backups.map((backup) => [backup.name, backup]));
+			const firstManifest = await readManifest(device, first.backupName);
+			const secondManifest = await readManifest(device, second.backupName);
+
+			expect(first.success).toBe(true);
+			expect(second.success).toBe(true);
+			expect(backups).toHaveLength(2);
+			expect(backupByName.get(first.backupName)).toEqual({
+				name: first.backupName,
+				timestamp: firstManifest.timestamp,
+				fileCount: firstManifest.fileCount,
+				totalSize: firstManifest.totalSize,
+				encrypted: firstManifest.encrypted,
+			});
+			expect(backupByName.get(second.backupName)).toEqual({
+				name: second.backupName,
+				timestamp: secondManifest.timestamp,
+				fileCount: secondManifest.fileCount,
+				totalSize: secondManifest.totalSize,
+				encrypted: secondManifest.encrypted,
+			});
+		});
+
+		it('creates a ZIP blob containing backup files and the plain manifest', async () => {
+			const device = await createInitializedDevice();
+			const markdown = '# Downloaded backup';
+			const binary = new Uint8Array([9, 7, 5, 3, 1]);
+			device.vault.seed('notes/download.md', markdown);
+			device.vault.seed('assets/payload.bin', binary);
+
+			const result = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
+			const manifest = await readManifest(device, result.backupName);
+			const downloader = new BackupDownloader(device.s3Provider, device.settings);
+			const blob = await downloader.createDownloadBlob(result.backupName);
+			const zip = await loadZip(blob);
+
+			expect(result.success).toBe(true);
+			expect(blob).toBeInstanceOf(Blob);
+			expect(blob.size).toBeGreaterThan(0);
+			expect(await readZipText(zip, 'notes/download.md')).toBe(markdown);
+			expect(await readZipBytes(zip, 'assets/payload.bin')).toEqual(binary);
+			expect(JSON.parse(await readZipText(zip, '.backup-manifest.json')) as BackupManifest).toEqual(manifest);
+		});
+
+		it('decrypts encrypted backup content before writing it into the downloaded ZIP', async () => {
+			const encryptionKey = await deriveKey('download zip decryption secret', new Uint8Array(32).fill(11));
+			const device = await createInitializedDevice({
+				encryptionKey,
+				settingsOverrides: {
+					encryptionEnabled: true,
+				},
+			});
+			const secretContent = 'Restored plaintext from encrypted backup';
+			device.vault.seed('private/secret.md', secretContent);
+
+			const result = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
+			const downloader = new BackupDownloader(device.s3Provider, device.settings);
+			downloader.setEncryptionKey(encryptionKey);
+			const zip = await loadZip(await downloader.createDownloadBlob(result.backupName));
+			const manifest = JSON.parse(await readZipText(zip, '.backup-manifest.json')) as BackupManifest;
+
+			expect(result.success).toBe(true);
+			expect(manifest.encrypted).toBe(true);
+			expect(await readZipText(zip, 'private/secret.md')).toBe(secretContent);
+		});
+	});
 
 	afterEach(async () => {
 		for (const device of activeDevices) {
