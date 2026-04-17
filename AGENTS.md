@@ -18,13 +18,14 @@
 ## Agent Directives
 
 1. **Strict Linting:** After EVERY code modification, run `npm run lint`. Fix errors immediately before proceeding.
-2. **Up-to-Date Knowledge:** If you lack current information on any dependency (AWS SDK, Obsidian API, etc.), use the `context7` tool (if it's available). Do not guess.
+2. **Up-to-Date Knowledge:** If you lack current information on any dependency (AWS SDK, Obsidian API, etc.), use the `context7` tool when it's available. Do not guess.
 3. **Document Everything:** Over-documenting is preferred. See the [Documentation](#documentation) section.
 4. **Maintain Consistency:** When you change logic or code, update all related mentions (docs, comments, tests, README, CONTRIBUTING, AGENTS).
 5. **Scrutinize Existing Code:** Don't assume it's perfect. If you see a bad pattern, fix it.
 6. **Fix the Code, Not the Test:** If a valid test fails, the code is broken. Never weaken a test to pass buggy code.
 7. **Root Cause Analysis:** Fix the root cause of bugs, don't patch symptoms.
 8. **Human contributor guide:** See [CONTRIBUTING.md](CONTRIBUTING.md) for the full human-facing development guide.
+9. Refer `OBSIDIAN-PLUGIN-GUIDE.md` for the official Obsidian plugin development guidelines and best practices. You should adhere to these strictly, as they are the basis for plugin approval and user trust.
 
 ## Architecture
 

@@ -34,11 +34,13 @@ export default tseslint.config(
 		"main.js",
 		"scripts/version.mjs",
 	]),
-	// Disable overly strict sentence-case for placeholder text
+	// Enable sentence-case with MinIO as a recognized brand
 	{
-		files: ["src/settings.ts", "src/sync/ConflictHandler.ts"],
+		files: ["src/**/*.ts"],
 		rules: {
-			"obsidianmd/ui/sentence-case": "off",
+			"obsidianmd/ui/sentence-case": ["warn", {
+				brands: ["MinIO"],
+			}],
 		},
 	},
 );

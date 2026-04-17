@@ -147,7 +147,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setName('Bucket')
 			.setDesc('Name of your S3 bucket')
 			.addText((text) => {
-				text.setPlaceholder('my-bucket');
+				text.setPlaceholder('Bucket name');
 				text.setValue(this.plugin.settings.bucket);
 				text.onChange(async (value) => {
 					this.plugin.settings.bucket = value;
@@ -174,7 +174,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setName('Secret access key')
 			.setDesc('Your S3 secret access key')
 			.addText((text) => {
-				text.setPlaceholder('your-secret-key');
+				text.setPlaceholder('Secret key');
 				text.setValue(this.plugin.settings.secretAccessKey);
 				text.inputEl.type = 'password';
 				text.onChange(async (value) => {
@@ -187,7 +187,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		if (this.plugin.settings.provider === 'minio' || this.plugin.settings.provider === 'custom') {
 			new Setting(containerEl)
 				.setName('Force path style')
-				.setDesc('Use path-style URLs (required for MinIO and some S3 compatible services)')
+				.setDesc('Use path-style URL format (required for some S3 compatible services)')
 				.addToggle((toggle) => {
 					toggle.setValue(this.plugin.settings.forcePathStyle);
 					toggle.onChange(async (value) => {
@@ -453,7 +453,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setDesc('Encrypt all files before uploading to S3')
 			.addToggle((toggle) => {
 				toggle.setValue(false);
-				toggle.onChange(async (value) => {
+				toggle.onChange((value) => {
 					if (value) {
 						this.showEncryptionSetup = true;
 						this.display();
@@ -541,7 +541,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.addButton((button) => {
 					button.setButtonText('Cancel');
-					button.onClick(async () => {
+					button.onClick(() => {
 						this.showEncryptionSetup = false;
 						this.display();
 					});
@@ -614,7 +614,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				.setName('Sync prefix')
 				.setDesc('S3 path prefix for synced files (e.g., "vault" → s3://bucket/vault/)')
 				.addText((text) => {
-					text.setPlaceholder('vault');
+					text.setPlaceholder('Sync prefix');
 					text.setValue(this.plugin.settings.syncPrefix);
 					text.onChange(async (value) => {
 						this.plugin.settings.syncPrefix = normalizePrefix(value) || 'vault';
@@ -657,7 +657,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			// Sync on startup
 			new Setting(containerEl)
 				.setName('Sync on startup')
-				.setDesc('Sync when Obsidian starts')
+				.setDesc('Run a sync when the app starts')
 				.addToggle((toggle) => {
 					toggle.setValue(this.plugin.settings.syncOnStartup);
 					toggle.onChange(async (value) => {
@@ -700,7 +700,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				.setName('Backup prefix')
 				.setDesc('S3 path prefix for backups (e.g., "backups" → s3://bucket/backups/)')
 				.addText((text) => {
-					text.setPlaceholder('backups');
+					text.setPlaceholder('Backup prefix');
 					text.setValue(this.plugin.settings.backupPrefix);
 					text.onChange(async (value) => {
 						this.plugin.settings.backupPrefix = normalizePrefix(value) || 'backups';
@@ -771,7 +771,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				} else {
 					new Setting(containerEl)
 						.setName('Retention copies')
-						.setDesc('Keep only the latest N backups (1-1000)')
+						.setDesc('Keep only the latest n backups (1-1000)')
 						.addText((text) => {
 							text.setPlaceholder('30');
 							text.setValue(String(this.plugin.settings.retentionCopies));
@@ -836,7 +836,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setName('Exclude patterns')
 			.setDesc('Files/folders to exclude from sync (comma-separated globs)')
 			.addTextArea((text) => {
-				text.setPlaceholder('workspace*, .trash/*');
+				text.setPlaceholder('Example: workspace*, .trash/*');
 				text.setValue(this.plugin.settings.excludePatterns.join(', '));
 				text.onChange(async (value) => {
 					this.plugin.settings.excludePatterns = value
