@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.1.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.1.0...3.1.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* correct author name formatting in LICENSE, README, manifest, package.json ([e2f3c1a](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e2f3c1adae7c53c2a6df75450d2b503fdad57c02))
+* updates for the plugin submission ([18683ed](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/18683edc0c8c777b110402a105e3842b72fce551))
+
+
+### Miscellaneous
+
+* address Obsidian community plugin submission review findings ([e9463e8](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e9463e8a5e715f1985c3d5b83d008b981404cadf))
+* update branch ([9a458dc](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/9a458dcb732d3a3a93e637a2ac0eb95e0c17c708))
+
+
+### Tests
+
+* **e2e:** add 27 pipeline E2E tests for sync, encryption, backup, and multi-device ([ea17fe9](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ea17fe9fdbb543a1a4f6aa4d8855206e265bb357))
+* **e2e:** add pipeline E2E test infrastructure with in-memory vault harness ([00bc6f6](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/00bc6f63d68c9fca3c2150d6743fedda83619afe))
+
 ## [3.1.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.0.0...3.1.0) (2026-04-16)
 
 
