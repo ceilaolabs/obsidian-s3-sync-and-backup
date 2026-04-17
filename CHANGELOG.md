@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.2.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.1.2...3.2.0) (2026-04-17)
+
+
+### Features
+
+* **backup:** add backup list modal with per-backup ZIP download ([ff7cb94](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ff7cb94326a9bb825e8e263aa46abde1822b7b8a))
+
+
+### Bug Fixes
+
+* backup issues ([4cd89fe](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/4cd89fe5f2f91191eefb055388ca1793f31eaed3))
+* **backup:** defer startup backup to onLayoutReady to prevent empty snapshots ([1eaf48e](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/1eaf48e78901834dc33f386e198ab13d49bc850d))
+
+
+### Tests
+
+* **backup:** add unit and E2E tests for backup list modal ([ef4d301](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ef4d301a9c1ce339e965b936139f28102ecf68e6))
+
 ## [3.1.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.1.1...3.1.2) (2026-04-17)
 
 
