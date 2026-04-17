@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.1.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.1.1...3.1.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* update description for consistency ([438b926](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/438b926d402098479dea07703e12c0675c9306e2))
+* update description for consistency across README, manifest, and package.json ([017cb48](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/017cb48e29c8ab8e88560faf3ff7c3ab02404e5d))
+
+
+### Miscellaneous
+
+* merge branch 'main' into dev ([b38553b](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/b38553bd380660f0d44739dc21ba9bab6c9d08c6))
+
 ## [3.1.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.1.0...3.1.1) (2026-04-16)
 
 
