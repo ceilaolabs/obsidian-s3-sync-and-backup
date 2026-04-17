@@ -223,28 +223,35 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Commands
 		this.registerCommands();
 
-		// Start sync services if enabled
+		// Start sync services (change tracker + sync scheduler) immediately.
+		// Backup scheduler is deferred to onLayoutReady below so that the vault
+		// index is fully populated before the first snapshot runs.
 		this.startSyncServices();
 
-		// Check remote encryption state on startup. If the vault is encrypted
-		// (marker exists in S3), auto-enable locally and block sync/backup until
-		// the user provides the passphrase in settings. This handles multi-device
-		// detection: device A enables encryption → device B detects on startup.
-		if (this.s3Provider && this.encryptionCoordinator) {
-			this.app.workspace.onLayoutReady(() => {
-				void this.checkEncryptionOnStartup();
-			});
-		}
+		// Everything below is deferred until workspace layout is ready so that
+		// Obsidian has finished restoring open tabs and the vault index is fully
+		// populated. Running these too early (before onLayoutReady) can cause
+		// empty backups (vault.getFiles() returns []) and spurious sync errors.
+		this.app.workspace.onLayoutReady(() => {
+			// Start backup scheduler after vault is indexed so the initial
+			// catch-up backup (if overdue) sees all vault files.
+			if (this.settings.backupEnabled) {
+				void this.backupScheduler?.start();
+			}
 
-		// Startup sync is deferred until workspace layout is ready so that Obsidian has
-		// finished restoring open tabs and the vault index is fully populated. Triggering
-		// sync too early (before onLayoutReady) can cause spurious file-not-found errors
-		// because the vault's in-memory file tree may not yet reflect disk reality.
-		if (this.settings.syncEnabled && this.settings.syncOnStartup) {
-			this.app.workspace.onLayoutReady(() => {
+			// Check remote encryption state on startup. If the vault is encrypted
+			// (marker exists in S3), auto-enable locally and block sync/backup until
+			// the user provides the passphrase in settings. This handles multi-device
+			// detection: device A enables encryption → device B detects on startup.
+			if (this.s3Provider && this.encryptionCoordinator) {
+				void this.checkEncryptionOnStartup();
+			}
+
+			// Trigger startup sync after vault index is ready.
+			if (this.settings.syncEnabled && this.settings.syncOnStartup) {
 				void this.syncScheduler?.triggerSync('startup');
-			});
-		}
+			}
+		});
 	}
 
 	/**
@@ -450,9 +457,8 @@ export default class S3SyncBackupPlugin extends Plugin {
 			}
 		}
 
-		if (this.settings.backupEnabled) {
-			void this.backupScheduler?.start();
-		}
+		// Backup scheduler is started in onload()'s onLayoutReady callback,
+		// not here, to avoid empty snapshots when vault index isn't populated.
 	}
 
 	/**
@@ -478,6 +484,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 	private restartSyncServices(): void {
 		this.stopSyncServices();
 		this.startSyncServices();
+
+		if (this.settings.backupEnabled) {
+			void this.backupScheduler?.start();
+		}
 	}
 
 	/**
