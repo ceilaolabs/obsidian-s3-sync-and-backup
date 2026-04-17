@@ -23,6 +23,7 @@ import {
 import { S3Provider } from './storage/S3Provider';
 import { normalizePrefix } from './utils/paths';
 import { validatePassphrase } from './crypto/KeyDerivation';
+import { BackupListModal } from './backup/BackupListModal';
 
 /**
  * Sync interval display names for dropdown.
@@ -567,6 +568,19 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		});
 	}
 
+	private openBackupListModal(): void {
+		const retentionManager = this.plugin.getRetentionManager();
+		const backupDownloader = this.plugin.getBackupDownloader();
+
+		if (!retentionManager || !backupDownloader) {
+			new Notice('Backup system not initialized. Check your S3 connection.');
+			return;
+		}
+
+		const modal = new BackupListModal(this.app, retentionManager, backupDownloader);
+		modal.open();
+	}
+
 	/**
 	 * Render the Sync settings section.
 	 *
@@ -778,6 +792,17 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					button.setButtonText('Backup now');
 					button.onClick(async () => {
 						await this.plugin.triggerManualBackup();
+					});
+				});
+
+			// View Backups button
+			new Setting(containerEl)
+				.setName('View backups')
+				.setDesc('View and download recent backup snapshots')
+				.addButton((button) => {
+					button.setButtonText('View backups');
+					button.onClick(() => {
+						this.openBackupListModal();
 					});
 				});
 		}

@@ -22,6 +22,7 @@ import { BackupDownloader } from './backup/BackupDownloader';
 import { SnapshotCreator } from './backup/SnapshotCreator';
 import { RetentionManager } from './backup/RetentionManager';
 import { BackupScheduler } from './backup/BackupScheduler';
+import { BackupListModal } from './backup/BackupListModal';
 import { getOrCreateDeviceId } from './crypto/VaultMarker';
 import { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import { BackupResult } from './types';
@@ -540,6 +541,19 @@ export default class S3SyncBackupPlugin extends Plugin {
 				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('s3-sync-and-backup');
 			},
 		});
+
+		this.addCommand({
+			id: 'view-backups',
+			name: 'View backups',
+			callback: () => {
+				if (!this.retentionManager || !this.backupDownloader) {
+					new Notice('Backup system not initialized');
+					return;
+				}
+				const modal = new BackupListModal(this.app, this.retentionManager, this.backupDownloader);
+				modal.open();
+			},
+		});
 	}
 
 	/**
@@ -742,6 +756,33 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 */
 	getS3Provider(): S3Provider | null {
 		return this.s3Provider;
+	}
+
+	/**
+	 * Get the retention manager for listing and managing backups.
+	 *
+	 * Used by the backup list modal to discover existing backup snapshots in S3
+	 * and display their metadata (timestamp, file count, size, encryption status).
+	 *
+	 * @returns The active {@link RetentionManager}, or `null` if the plugin has not
+	 *   yet loaded or has been unloaded.
+	 */
+	getRetentionManager(): RetentionManager | null {
+		return this.retentionManager;
+	}
+
+	/**
+	 * Get the backup downloader for exporting backups as ZIP files.
+	 *
+	 * Used by the backup list modal to trigger browser-side ZIP download of a
+	 * selected backup snapshot. The downloader handles transparent decryption
+	 * when the backup was created with encryption enabled.
+	 *
+	 * @returns The active {@link BackupDownloader}, or `null` if the plugin has not
+	 *   yet loaded or has been unloaded.
+	 */
+	getBackupDownloader(): BackupDownloader | null {
+		return this.backupDownloader;
 	}
 
 	/**
