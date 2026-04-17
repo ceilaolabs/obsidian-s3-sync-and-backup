@@ -13,6 +13,24 @@ export class Notice {
     }
 }
 
+export class Modal {
+    app: App;
+    contentEl: HTMLElement;
+
+    constructor(app: App) {
+        this.app = app;
+        this.contentEl = {} as HTMLElement;
+    }
+
+    open(): void {
+        // Mock open lifecycle
+    }
+
+    close(): void {
+        // Mock close lifecycle
+    }
+}
+
 export class Plugin {
     app!: App;
     manifest!: PluginManifest;
