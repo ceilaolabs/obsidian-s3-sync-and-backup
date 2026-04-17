@@ -125,6 +125,7 @@ When encryption is enabled:
 | **Retention days** | Delete backups older than this many days (1–360). Only shown in "By days" mode. | 30 |
 | **Retention copies** | Keep only the latest N backups (1–1000). Only shown in "By copies" mode. | 30 |
 | **Backup now** | Create a backup snapshot immediately. |  |
+| **View backups** | Open a modal listing the 5 most recent backups with per-backup download buttons. Each entry shows timestamp, file count, size, and encryption status. |  |
 
 ### Advanced
 
@@ -147,7 +148,7 @@ All commands are available via the Obsidian command palette (`Ctrl/Cmd + P`) and
 | **S3 Sync & Backup: Pause sync** | Pause automatic sync (shown only when sync and auto-sync are enabled). |
 | **S3 Sync & Backup: Resume sync** | Resume automatic sync after pausing. |
 | **S3 Sync & Backup: View sync log** | Open the sync log viewer. |
-| **S3 Sync & Backup: View backups** | Open the plugin settings to the backup section. |
+| **S3 Sync & Backup: View backups** | Open a modal listing recent backups with download buttons. |
 | **S3 Sync & Backup: Open settings** | Open the plugin settings page. |
 
 ---
@@ -221,7 +222,7 @@ It is <strong>not recommended</strong>. Using two sync solutions simultaneously 
 
 <details>
 <summary><strong>How do I restore from a backup?</strong></summary>
-Go to <strong>Settings → S3 Sync & Backup → Backup</strong>. Each backup has a download button that exports a ZIP file. Extract it and manually copy files back into your vault.
+Go to <strong>Settings → S3 Sync & Backup → Backup → View backups</strong>, or use the <strong>View backups</strong> command from the command palette. The modal lists the 5 most recent backups — click "Download zip" to export one as a ZIP file. Extract it and manually copy files back into your vault.
 </details>
 
 <details>

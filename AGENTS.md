@@ -55,7 +55,8 @@ obsidian-s3-sync-and-backup/
 │   │   ├── BackupScheduler.ts       # Backup scheduling with catch-up logic
 │   │   ├── SnapshotCreator.ts       # Full vault snapshot creation
 │   │   ├── RetentionManager.ts      # Old backup cleanup (by days/copies)
-│   │   └── BackupDownloader.ts      # Backup download as zip
+│   │   ├── BackupDownloader.ts      # Backup download as zip
+│   │   └── BackupListModal.ts       # Modal UI listing recent backups with download
 │   │
 │   ├── storage/                     # S3 abstraction layer
 │   │   ├── S3Provider.ts            # S3 operations wrapper

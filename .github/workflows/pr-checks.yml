@@ -8,7 +8,7 @@
 #   - check-skip: Determines if checks should be skipped (for release-please PRs)
 #   - validate:   Validates commit messages follow conventional commits format
 #   - lint:       Runs ESLint to check code style and quality
-#   - test:       Runs the test suite with coverage reporting
+#   - test:       Runs the test suite (unit, integration, E2E) with coverage reporting
 #   - build:      Builds the plugin and verifies required output files
 #   - pr-status:  Final status gate for branch protection rules
 #
@@ -103,8 +103,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Testing
   # ---------------------------------------------------------------------------
-  # Runs the full test suite including unit tests and integration tests.
-  # Integration tests require S3 secrets to be configured.
+  # Runs the full test suite including unit tests, integration tests, and E2E tests.
+  # Integration and E2E tests require S3 secrets to be configured.
   # Coverage reports are uploaded as artifacts for review.
   # ---------------------------------------------------------------------------
   test:
@@ -144,6 +144,18 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           S3_REGION: ${{ secrets.S3_REGION }}
         run: npm run test:integration
+
+      # Run E2E pipeline tests (if S3 credentials are configured)
+      # These exercise full sync, encryption, backup, and multi-device workflows
+      - name: Run E2E Tests
+        if: env.S3_URL != ''
+        env:
+          S3_URL: ${{ secrets.S3_URL }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+        run: npm run test:e2e
 
       # Upload coverage report as artifact for later review
       - uses: actions/upload-artifact@v4
