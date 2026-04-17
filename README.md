@@ -1,6 +1,6 @@
 # Obsidian S3 Sync & Backup
 
-Bi-directional vault synchronization and scheduled backups for Obsidian with S3-compatible storage and optional end-to-end encryption.
+Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, MinIO, Cloudflare R2, etc.) with optional end-to-end encryption.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-1.0.0+-purple.svg)
