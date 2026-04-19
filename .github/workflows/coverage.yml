@@ -1,0 +1,40 @@
+# =============================================================================
+# Coverage Workflow
+# =============================================================================
+# Runs the unit test suite with coverage on every push to main and uploads
+# the report to Codecov. Kept separate from pr-checks.yml so PR runs stay
+# fast and Codecov only tracks merged-to-main code.
+# =============================================================================
+
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  coverage:
+    name: Test and upload coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ceilaolabs/obsidian-s3-sync-and-backup
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
