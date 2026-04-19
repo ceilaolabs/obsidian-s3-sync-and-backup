@@ -23,6 +23,10 @@ on:
     branches: [main]
     types: [opened, edited, synchronize, reopened]
 
+# Restrict the GITHUB_TOKEN to the minimum required permissions.
+# All jobs in this workflow only need to read repository content.
+permissions: read-all
+
 jobs:
   # ---------------------------------------------------------------------------
   # Skip Check

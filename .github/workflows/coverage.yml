@@ -12,6 +12,10 @@ on:
   push:
     branches: [main]
 
+# Restrict the GITHUB_TOKEN to the minimum required permissions.
+# This job only reads repository content and uploads coverage data externally.
+permissions: read-all
+
 jobs:
   coverage:
     name: Test and upload coverage

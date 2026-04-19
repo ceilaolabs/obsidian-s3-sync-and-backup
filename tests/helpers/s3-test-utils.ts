@@ -71,13 +71,21 @@ export function createTestS3Client(): S3Client {
 export function createTestSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBackupSettings {
     const config = getS3Config();
 
-    // Determine provider from endpoint
+    // Determine provider from endpoint hostname (parsed to avoid substring spoofing,
+    // e.g. an attacker-controlled URL like "evil.amazonaws.com.attacker.com" would
+    // incorrectly match a plain .includes('amazonaws.com') check).
     let provider: 'aws' | 'r2' | 'minio' | 'custom';
-    if (config.endpoint.includes('r2.cloudflarestorage.com')) {
+    let endpointHostname = '';
+    try {
+        endpointHostname = new URL(config.endpoint).hostname;
+    } catch {
+        // endpoint is empty or not a valid URL — leave hostname as empty string
+    }
+    if (endpointHostname === 'r2.cloudflarestorage.com' || endpointHostname.endsWith('.r2.cloudflarestorage.com')) {
         provider = 'r2';
-    } else if (config.endpoint.includes('amazonaws.com') || !config.endpoint) {
+    } else if (endpointHostname.endsWith('.amazonaws.com') || !config.endpoint) {
         provider = 'aws';
-    } else if (config.endpoint.includes('minio') || config.endpoint.includes('localhost')) {
+    } else if (endpointHostname === 'localhost' || endpointHostname.includes('minio')) {
         provider = 'minio';
     } else {
         provider = 'custom';
