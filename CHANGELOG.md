@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.4.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.3.0...3.4.0) (2026-04-19)
+
+
+### Features
+
+* add Codecov coverage workflow on push to main ([7312c7e](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7312c7e28d6afa315c7f1e79a411508d910f3893))
+
+
+### Bug Fixes
+
+* security fixes suggested by codeql ([f5ed3ba](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/f5ed3bac615c6166f606d58934e34a1237b121a0))
+* **security:** resolve CodeQL high-severity alerts ([9796abf](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/9796abf73bb0ed3615935bd36d90b49eee1ed717))
+
+
+### Documentation
+
+* update README.md to add/reorder badges ([f8ac6ae](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/f8ac6ae62ff67f0a9e3042e53b1c4d0adcec9fe4))
+* update README.md to add/reorder badges ([5e070ee](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5e070ee1586c97884e4583eb558bea0941ce57d8))
+
 ## [3.3.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.2.0...3.3.0) (2026-04-17)
 
 
