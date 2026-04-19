@@ -160,16 +160,18 @@ export function matchGlob(path: string, pattern: string): boolean {
 
     // Convert glob pattern to a regex string step-by-step:
     const regexPattern = pattern
-        // 1. Escape literal dots so they don't act as regex "any character" wildcards
-        //    e.g. ".obsidian" → "\\.obsidian"
-        .replace(/\./g, '\\.')
-        // 2. Temporarily replace ** with a unique placeholder before handling single *,
-        //    so we don't accidentally expand ** in the next step
+        // 1. Temporarily replace glob wildcards with placeholders so they survive
+        //    the regex-escape step below unchanged.
         .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-        // 3. Replace single * with [^/]* — matches anything except a path separator
-        //    e.g. "*.md" → "[^/]*.md"
-        .replace(/\*/g, '[^/]*')
-        // 4. Restore the ** placeholder as .* — matches any character including /
+        .replace(/\*/g, '<<<STAR>>>')
+        // 2. Escape ALL remaining regex metacharacters (dots, brackets, parens, etc.)
+        //    so that literal characters in the pattern are matched exactly.
+        //    e.g. ".obsidian" → "\\.obsidian", "(project)" → "\\(project\\)"
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+        // 3. Restore single * as [^/]* — matches anything except a path separator
+        //    e.g. "*.md" → "[^/]*\\.md"
+        .replace(/<<<STAR>>>/g, '[^/]*')
+        // 4. Restore ** as .* — matches any character including /
         //    e.g. "notes/**" → "notes/.*"
         .replace(/<<<GLOBSTAR>>>/g, '.*');
 
