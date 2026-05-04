@@ -12,16 +12,20 @@
 /**
  * Supported S3-compatible storage providers
  */
-export type S3ProviderType = 'aws' | 'minio' | 'r2' | 'custom';
+export type S3ProviderType = 'aws' | 'r2' | 'rustfs' | 'custom';
 
 /**
- * Provider display names for UI
+ * Provider display names for UI.
+ *
+ * Insertion order controls the order entries appear in the settings dropdown
+ * (driven by `Object.entries(S3_PROVIDER_NAMES)` in `settings.ts`). The desired
+ * order is: AWS S3 → Cloudflare R2 → RustFS → Other S3-compatible.
  */
 export const S3_PROVIDER_NAMES: Record<S3ProviderType, string> = {
 	aws: 'AWS S3',
-	minio: 'MinIO',
 	r2: 'Cloudflare R2',
-	custom: 'Custom S3-compatible',
+	rustfs: 'RustFS',
+	custom: 'Other S3-compatible',
 };
 
 // =============================================================================

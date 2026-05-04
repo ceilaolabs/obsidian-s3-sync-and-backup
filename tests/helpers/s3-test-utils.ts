@@ -74,7 +74,7 @@ export function createTestSettings(overrides: Partial<S3SyncBackupSettings> = {}
     // Determine provider from endpoint hostname (parsed to avoid substring spoofing,
     // e.g. an attacker-controlled URL like "evil.amazonaws.com.attacker.com" would
     // incorrectly match a plain .includes('amazonaws.com') check).
-    let provider: 'aws' | 'r2' | 'minio' | 'custom';
+    let provider: 'aws' | 'r2' | 'rustfs' | 'custom';
     let endpointHostname = '';
     try {
         endpointHostname = new URL(config.endpoint).hostname;
@@ -85,8 +85,8 @@ export function createTestSettings(overrides: Partial<S3SyncBackupSettings> = {}
         provider = 'r2';
     } else if (endpointHostname.endsWith('.amazonaws.com') || !config.endpoint) {
         provider = 'aws';
-    } else if (endpointHostname === 'localhost' || endpointHostname.includes('minio')) {
-        provider = 'minio';
+    } else if (endpointHostname === 'localhost' || endpointHostname.includes('rustfs')) {
+        provider = 'rustfs';
     } else {
         provider = 'custom';
     }

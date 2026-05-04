@@ -1,6 +1,6 @@
 # Obsidian S3 Sync & Backup
 
-Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, MinIO, Cloudflare R2, etc.) with optional end-to-end encryption.
+Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, Cloudflare R2, RustFS, etc.) with optional end-to-end encryption.
 
 [![Latest Release](https://img.shields.io/github/v/release/ceilaolabs/obsidian-s3-sync-and-backup?sort=semver)](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/releases/latest)
 ![Obsidian](https://img.shields.io/badge/Obsidian-1.0.0+-purple.svg)
@@ -11,7 +11,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 ## Features
 
 - **Bi-directional Sync** — Three-way reconciliation keeps your vault synchronized across devices via S3. Per-file SHA-256 baselines stored locally in IndexedDB detect changes accurately — no cloud manifest required.
-- **S3-Compatible Storage** — Works with AWS S3, Cloudflare R2, MinIO, and any S3-compatible custom endpoint.
+- **S3-Compatible Storage** — Works with AWS S3, Cloudflare R2, RustFS, and any other S3-compatible endpoint.
 - **End-to-End Encryption** — Optional XSalsa20-Poly1305 encryption with Argon2id key derivation. Encrypts both synced files and backup snapshots. Passphrase can be remembered for auto-unlock on startup.
 - **Scheduled Backups** — Full vault snapshot backups with configurable intervals (hourly to weekly). Download any backup as a ZIP from settings.
 - **Smart Conflict Resolution** — When the same file changes on two devices while offline, the plugin creates `LOCAL_` and `REMOTE_` copies so you never lose data.
@@ -44,13 +44,13 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 
 ### 1. Configure S3 Connection
 1. Open **Settings** → **S3 Sync & Backup**.
-2. Select your provider (**AWS S3**, **Cloudflare R2**, **MinIO**, or **Custom**).
+2. Select your provider (**AWS S3**, **Cloudflare R2**, **RustFS**, or **Other S3-compatible**).
 3. Enter your credentials:
    - **Endpoint URL**: Required for non-AWS providers.
    - **Region**: Use `auto` for Cloudflare R2.
    - **Bucket name**: Your S3 bucket.
    - **Access Key ID** & **Secret Access Key**.
-   - **Force Path Style**: Enable for MinIO and some custom endpoints.
+   - **Force Path Style**: Only shown for the **Other S3-compatible** provider — AWS S3, Cloudflare R2, and RustFS each use a fixed addressing mode (path-style for R2/RustFS, virtual-hosted for AWS).
 4. Click **Test Connection** to verify credentials and bucket access.
 
 ### 2. Enable Sync
@@ -88,13 +88,13 @@ When encryption is enabled:
 
 | Setting | Description |
 | :--- | :--- |
-| **Provider** | Storage provider: AWS S3, MinIO, Cloudflare R2, or Custom. |
-| **Endpoint URL** | S3-compatible endpoint URL. Required for non-AWS providers (e.g., `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` for R2, `http://localhost:9000` for MinIO). Hidden when provider is AWS. |
+| **Provider** | Storage provider: AWS S3, Cloudflare R2, RustFS, or Other S3-compatible. |
+| **Endpoint URL** | S3-compatible endpoint URL. Required for non-AWS providers (e.g., `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` for R2, `http://localhost:9000` for RustFS). Hidden when provider is AWS. |
 | **Region** | AWS region (e.g., `us-east-1`). Use `auto` for Cloudflare R2. |
 | **Bucket** | Name of your S3 bucket. |
 | **Access key ID** | Your S3 access key ID. Displayed as a password field. |
 | **Secret access key** | Your S3 secret access key. Displayed as a password field. |
-| **Force path style** | Use path-style URLs instead of virtual-hosted. Required for MinIO and some custom endpoints. Only shown for MinIO and Custom providers. |
+| **Force path style** | Use path-style URLs instead of virtual-hosted. Required for some self-hosted S3-compatible endpoints. Only shown for the **Other S3-compatible** provider — AWS, R2, and RustFS each pin a fixed addressing mode internally. |
 | **Test connection** | Verify credentials, bucket access, and required permissions. |
 
 ### Encryption

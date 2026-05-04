@@ -2,7 +2,7 @@
  * S3 Configuration Module
  *
  * Provides configuration utilities for different S3-compatible providers.
- * Supports AWS S3, MinIO, Cloudflare R2, and custom endpoints.
+ * Supports AWS S3, Cloudflare R2, RustFS, and other S3-compatible endpoints.
  *
  * The main export is `buildS3ClientConfig`, which assembles a complete
  * `S3ClientConfig` from plugin settings.  Provider-specific concerns
@@ -20,7 +20,7 @@
  */
 
 import { S3ClientConfig } from '@aws-sdk/client-s3';
-import { S3ProviderType, S3SyncBackupSettings } from '../types';
+import { S3ProviderType, S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../types';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
 // Provider endpoints are determined dynamically based on settings
@@ -52,18 +52,19 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
             }
             throw new Error('Cloudflare R2 requires an endpoint URL (https://<ACCOUNT_ID>.r2.cloudflarestorage.com)');
 
-        case 'minio':
-            // MinIO requires custom endpoint
+        case 'rustfs':
+            // RustFS is self-hosted and always requires a custom endpoint URL
+            // (e.g., http://localhost:9000 for a local deployment).
             if (settings.endpoint) {
                 return settings.endpoint;
             }
-            throw new Error('MinIO requires an endpoint URL');
+            throw new Error('RustFS requires an endpoint URL');
 
         case 'custom':
             if (settings.endpoint) {
                 return settings.endpoint;
             }
-            throw new Error('Custom provider requires an endpoint URL');
+            throw new Error('Other S3-compatible provider requires an endpoint URL');
 
         default:
             return settings.endpoint || undefined;
@@ -76,10 +77,12 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
  * Path-style: `https://s3.region.amazonaws.com/bucket/key`
  * Virtual-hosted: `https://bucket.s3.region.amazonaws.com/key`
  *
- * MinIO and some other providers require path-style addressing because they
- * do not support virtual-hosted-style (the bucket name is not a valid DNS
- * sub-domain on self-hosted instances).  Cloudflare R2 supports both modes
- * but path-style is more reliable across different R2 account configurations
+ * RustFS supports both addressing modes but defaults to path-style because
+ * virtual-hosted-style on a self-hosted deployment requires a wildcard DNS
+ * record (`*.rustfs.example.com`) and a matching wildcard TLS certificate —
+ * non-trivial extra setup that most self-hosted users skip.  We therefore
+ * force path-style for RustFS.  Cloudflare R2 supports both modes too but
+ * path-style is more reliable across different R2 account configurations
  * and avoids potential wildcard certificate issues.
  *
  * @param settings - Plugin settings containing the provider type and the
@@ -89,8 +92,9 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
  */
 export function shouldForcePathStyle(settings: S3SyncBackupSettings): boolean {
     switch (settings.provider) {
-        case 'minio':
-            // MinIO typically requires path-style
+        case 'rustfs':
+            // RustFS supports both modes, but path-style is the documented
+            // default and works on every deployment without DNS configuration.
             return true;
 
         case 'r2':
@@ -129,7 +133,8 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
     const config: S3ClientConfig = {
         // The AWS SDK requires a region even for non-AWS providers.  `'auto'`
         // is Cloudflare R2's documented value and is a harmless default for
-        // MinIO and custom endpoints which ignore the region header entirely.
+        // RustFS and other S3-compatible endpoints which ignore the region
+        // header entirely.
         region: settings.region || 'auto',
         credentials: {
             accessKeyId: settings.accessKeyId,
@@ -168,6 +173,17 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
 export function validateConnectionSettings(settings: S3SyncBackupSettings): string[] {
     const errors: string[] = [];
 
+    // Provider must be one of the supported types. TypeScript's `S3ProviderType`
+    // only narrows at compile time — at runtime, persisted `data.json` files
+    // from earlier plugin versions can carry stale provider strings (e.g. the
+    // removed `'minio'` value) that would silently fall through every switch
+    // in this module. Catch those here before any S3 client is constructed.
+    if (!Object.prototype.hasOwnProperty.call(S3_PROVIDER_NAMES, settings.provider)) {
+        errors.push(
+            `Unsupported provider "${settings.provider}". Re-select a provider in Settings.`,
+        );
+    }
+
     if (!settings.bucket) {
         errors.push('Bucket name is required');
     }
@@ -185,12 +201,12 @@ export function validateConnectionSettings(settings: S3SyncBackupSettings): stri
         errors.push('Cloudflare R2 requires an endpoint URL');
     }
 
-    if (settings.provider === 'minio' && !settings.endpoint) {
-        errors.push('MinIO requires an endpoint URL');
+    if (settings.provider === 'rustfs' && !settings.endpoint) {
+        errors.push('RustFS requires an endpoint URL');
     }
 
     if (settings.provider === 'custom' && !settings.endpoint) {
-        errors.push('Custom provider requires an endpoint URL');
+        errors.push('Other S3-compatible provider requires an endpoint URL');
     }
 
     // AWS requires region
@@ -205,7 +221,7 @@ export function validateConnectionSettings(settings: S3SyncBackupSettings): stri
  * Return a human-readable display name for a provider type.
  *
  * Used in settings UI labels, log messages, and error strings where the raw
- * `S3ProviderType` literal (`'r2'`, `'minio'`, etc.) would be confusing to
+ * `S3ProviderType` literal (`'r2'`, `'rustfs'`, etc.) would be confusing to
  * non-technical users.
  *
  * @param provider - Provider type identifier.
@@ -215,12 +231,12 @@ export function getProviderDisplayName(provider: S3ProviderType): string {
     switch (provider) {
         case 'aws':
             return 'AWS S3';
-        case 'minio':
-            return 'MinIO';
         case 'r2':
             return 'Cloudflare R2';
+        case 'rustfs':
+            return 'RustFS';
         case 'custom':
-            return 'Custom S3-compatible';
+            return 'Other S3-compatible';
         default:
             return 'Unknown';
     }

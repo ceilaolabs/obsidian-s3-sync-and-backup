@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Obsidian S3 Sync & Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, MinIO, Cloudflare R2) with optional end-to-end encryption.
+**Obsidian S3 Sync & Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, Cloudflare R2, RustFS) with optional end-to-end encryption.
 
 **Plugin ID:** `s3-sync-and-backup`
 
