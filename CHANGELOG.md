@@ -1,5 +1,26 @@
 # Changelog
 
+## [4.0.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.4.0...4.0.0) (2026-05-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **storage:** Saved settings with provider: 'minio' are no longer accepted. The plugin has not been published to the community plugin store yet, so no end users are affected.
+
+### Features
+
+* **storage:** replace MinIO with RustFS as the dedicated provider option ([e6b654d](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e6b654d3851f0b51954b3c14754fc17323e1f6ff))
+
+
+### Bug Fixes
+
+* **storage:** reject unsupported provider values at runtime ([56ff406](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/56ff4068bf33aa4d303c164cc636107d8724ae12))
+
+
+### Code Refactoring
+
+* **settings:** hide force-path-style toggle for fixed-mode providers ([5d64233](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5d64233b1b0304824d7273e08269c19532b0dedd))
+
 ## [3.4.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.3.0...3.4.0) (2026-04-19)
 
 
