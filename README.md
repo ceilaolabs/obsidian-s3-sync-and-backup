@@ -50,7 +50,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
    - **Region**: Use `auto` for Cloudflare R2.
    - **Bucket name**: Your S3 bucket.
    - **Access Key ID** & **Secret Access Key**.
-   - **Force Path Style**: Enable for some other S3-compatible endpoints (forced on automatically for RustFS).
+   - **Force Path Style**: Only shown for the **Other S3-compatible** provider — AWS S3, Cloudflare R2, and RustFS each use a fixed addressing mode (path-style for R2/RustFS, virtual-hosted for AWS).
 4. Click **Test Connection** to verify credentials and bucket access.
 
 ### 2. Enable Sync
@@ -94,7 +94,7 @@ When encryption is enabled:
 | **Bucket** | Name of your S3 bucket. |
 | **Access key ID** | Your S3 access key ID. Displayed as a password field. |
 | **Secret access key** | Your S3 secret access key. Displayed as a password field. |
-| **Force path style** | Use path-style URLs instead of virtual-hosted. Required for some self-hosted S3-compatible endpoints. Only shown for RustFS and Other S3-compatible providers (RustFS uses path-style unconditionally). |
+| **Force path style** | Use path-style URLs instead of virtual-hosted. Required for some self-hosted S3-compatible endpoints. Only shown for the **Other S3-compatible** provider — AWS, R2, and RustFS each pin a fixed addressing mode internally. |
 | **Test connection** | Verify credentials, bucket access, and required permissions. |
 
 ### Encryption

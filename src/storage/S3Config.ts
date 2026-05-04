@@ -77,11 +77,13 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
  * Path-style: `https://s3.region.amazonaws.com/bucket/key`
  * Virtual-hosted: `https://bucket.s3.region.amazonaws.com/key`
  *
- * RustFS and some other self-hosted providers require path-style addressing
- * because they do not support virtual-hosted-style (the bucket name is not a
- * valid DNS sub-domain on self-hosted instances).  Cloudflare R2 supports both
- * modes but path-style is more reliable across different R2 account
- * configurations and avoids potential wildcard certificate issues.
+ * RustFS supports both addressing modes but defaults to path-style because
+ * virtual-hosted-style on a self-hosted deployment requires a wildcard DNS
+ * record (`*.rustfs.example.com`) and a matching wildcard TLS certificate —
+ * non-trivial extra setup that most self-hosted users skip.  We therefore
+ * force path-style for RustFS.  Cloudflare R2 supports both modes too but
+ * path-style is more reliable across different R2 account configurations
+ * and avoids potential wildcard certificate issues.
  *
  * @param settings - Plugin settings containing the provider type and the
  *   user's `forcePathStyle` preference for AWS/custom providers.
@@ -91,7 +93,8 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
 export function shouldForcePathStyle(settings: S3SyncBackupSettings): boolean {
     switch (settings.provider) {
         case 'rustfs':
-            // RustFS requires path-style (per RustFS S3 client docs)
+            // RustFS supports both modes, but path-style is the documented
+            // default and works on every deployment without DNS configuration.
             return true;
 
         case 'r2':

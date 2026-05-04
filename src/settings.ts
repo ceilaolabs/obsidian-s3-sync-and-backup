@@ -86,10 +86,12 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render the Connection settings section.
 	 *
 	 * Renders provider dropdown plus provider-conditional fields: endpoint URL
-	 * (hidden for AWS), force-path-style toggle (shown for RustFS and the
-	 * "Other S3-compatible" provider), and the "Test connection" button.
-	 * Changing the provider calls `this.display()` to fully re-render so
-	 * conditional fields appear or disappear immediately.
+	 * (hidden for AWS), force-path-style toggle (shown only for the
+	 * "Other S3-compatible" provider — AWS, R2, and RustFS each have a fixed
+	 * addressing mode driven by `shouldForcePathStyle`, so exposing the toggle
+	 * elsewhere would let users flip a setting that has no effect), and the
+	 * "Test connection" button. Changing the provider calls `this.display()`
+	 * to fully re-render so conditional fields appear or disappear immediately.
 	 *
 	 * @param containerEl - The settings tab container element to append into.
 	 */
@@ -184,8 +186,9 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				});
 			});
 
-		// Force Path Style (for RustFS and other S3-compatible providers)
-		if (this.plugin.settings.provider === 'rustfs' || this.plugin.settings.provider === 'custom') {
+		// Force Path Style (only for the generic "Other S3-compatible" provider —
+		// AWS/R2/RustFS each pin path-style behaviour in `shouldForcePathStyle`).
+		if (this.plugin.settings.provider === 'custom') {
 			new Setting(containerEl)
 				.setName('Force path style')
 				.setDesc('Use path-style URL format (required for some S3 compatible services)')
