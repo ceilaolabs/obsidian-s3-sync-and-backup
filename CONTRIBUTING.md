@@ -231,7 +231,7 @@ When filing a bug report on [GitHub Issues](https://github.com/ceilaolabs/obsidi
 3.  **Include:**
     -   Obsidian version and platform (desktop/mobile, OS)
     -   Plugin version
-    -   S3 provider (AWS, R2, MinIO, etc.)
+    -   S3 provider (AWS, R2, RustFS, etc.)
     -   Steps to reproduce
     -   Expected vs. actual behavior
     -   Console errors (if any — open DevTools with `Cmd/Ctrl + Shift + I`)

@@ -86,9 +86,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render the Connection settings section.
 	 *
 	 * Renders provider dropdown plus provider-conditional fields: endpoint URL
-	 * (hidden for AWS), force-path-style toggle (shown only for MinIO and custom),
-	 * and the "Test connection" button. Changing the provider calls `this.display()`
-	 * to fully re-render so conditional fields appear or disappear immediately.
+	 * (hidden for AWS), force-path-style toggle (shown for RustFS and the
+	 * "Other S3-compatible" provider), and the "Test connection" button.
+	 * Changing the provider calls `this.display()` to fully re-render so
+	 * conditional fields appear or disappear immediately.
 	 *
 	 * @param containerEl - The settings tab container element to append into.
 	 */
@@ -183,8 +184,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				});
 			});
 
-		// Force Path Style (for MinIO and custom providers)
-		if (this.plugin.settings.provider === 'minio' || this.plugin.settings.provider === 'custom') {
+		// Force Path Style (for RustFS and other S3-compatible providers)
+		if (this.plugin.settings.provider === 'rustfs' || this.plugin.settings.provider === 'custom') {
 			new Setting(containerEl)
 				.setName('Force path style')
 				.setDesc('Use path-style URL format (required for some S3 compatible services)')
@@ -223,8 +224,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		switch (this.plugin.settings.provider) {
 			case 'r2':
 				return 'Your R2 endpoint URL (https://<ACCOUNT_ID>.r2.cloudflarestorage.com)';
-			case 'minio':
-				return 'Your MinIO server URL (e.g., http://localhost:9000)';
+			case 'rustfs':
+				return 'Your RustFS server URL (e.g., http://localhost:9000)';
 			case 'custom':
 				return 'Your S3-compatible endpoint URL';
 			default:
@@ -236,7 +237,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Return the placeholder text for the endpoint URL input field.
 	 *
 	 * Provides a concrete example URL so users know the expected format for their
-	 * chosen provider (e.g., the MinIO localhost URL pattern).
+	 * chosen provider (e.g., the RustFS localhost URL pattern).
 	 *
 	 * @returns A provider-specific example URL string, or an empty string for AWS
 	 *   (endpoint not shown for AWS).
@@ -245,7 +246,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		switch (this.plugin.settings.provider) {
 			case 'r2':
 				return 'https://abc123.r2.cloudflarestorage.com';
-			case 'minio':
+			case 'rustfs':
 				return 'http://localhost:9000';
 			case 'custom':
 				return 'https://s3.example.com';

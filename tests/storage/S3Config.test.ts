@@ -81,31 +81,31 @@ describe('S3Config', () => {
         });
 
         /**
-         * MinIO requires custom endpoint
+         * RustFS requires a custom endpoint URL (typically localhost:9000)
          */
-        it('should return endpoint for MinIO provider', () => {
+        it('should return endpoint for RustFS provider', () => {
             const settings = createTestSettings({
-                provider: 'minio',
+                provider: 'rustfs',
                 endpoint: 'http://localhost:9000',
             });
             expect(getEndpointForProvider(settings)).toBe('http://localhost:9000');
         });
 
         /**
-         * MinIO without endpoint should throw error
+         * RustFS without endpoint should throw error
          */
-        it('should throw error for MinIO without endpoint', () => {
+        it('should throw error for RustFS without endpoint', () => {
             const settings = createTestSettings({
-                provider: 'minio',
+                provider: 'rustfs',
                 endpoint: '',
             });
-            expect(() => getEndpointForProvider(settings)).toThrow('MinIO requires an endpoint URL');
+            expect(() => getEndpointForProvider(settings)).toThrow('RustFS requires an endpoint URL');
         });
 
         /**
-         * Custom provider requires explicit endpoint
+         * Other S3-compatible provider requires explicit endpoint
          */
-        it('should return endpoint for custom provider', () => {
+        it('should return endpoint for other S3-compatible provider', () => {
             const settings = createTestSettings({
                 provider: 'custom',
                 endpoint: 'https://custom-s3.example.com',
@@ -114,23 +114,23 @@ describe('S3Config', () => {
         });
 
         /**
-         * Custom provider without endpoint should throw error
+         * Other S3-compatible provider without endpoint should throw error
          */
-        it('should throw error for custom provider without endpoint', () => {
+        it('should throw error for other S3-compatible provider without endpoint', () => {
             const settings = createTestSettings({
                 provider: 'custom',
                 endpoint: '',
             });
-            expect(() => getEndpointForProvider(settings)).toThrow('Custom provider requires an endpoint URL');
+            expect(() => getEndpointForProvider(settings)).toThrow('Other S3-compatible provider requires an endpoint URL');
         });
     });
 
     describe('shouldForcePathStyle', () => {
         /**
-         * MinIO typically requires path-style addressing
+         * RustFS requires path-style addressing per RustFS S3 client docs
          */
-        it('should return true for MinIO', () => {
-            const settings = createTestSettings({ provider: 'minio' });
+        it('should return true for RustFS', () => {
+            const settings = createTestSettings({ provider: 'rustfs' });
             expect(shouldForcePathStyle(settings)).toBe(true);
         });
 
@@ -286,27 +286,27 @@ describe('S3Config', () => {
         });
 
         /**
-         * MinIO without endpoint should be caught
+         * RustFS without endpoint should be caught
          */
-        it('should return error for MinIO without endpoint', () => {
+        it('should return error for RustFS without endpoint', () => {
             const settings = createTestSettings({
-                provider: 'minio',
+                provider: 'rustfs',
                 endpoint: '',
             });
             const errors = validateConnectionSettings(settings);
-            expect(errors).toContain('MinIO requires an endpoint URL');
+            expect(errors).toContain('RustFS requires an endpoint URL');
         });
 
         /**
-         * Custom provider without endpoint should be caught
+         * Other S3-compatible provider without endpoint should be caught
          */
-        it('should return error for custom provider without endpoint', () => {
+        it('should return error for other S3-compatible provider without endpoint', () => {
             const settings = createTestSettings({
                 provider: 'custom',
                 endpoint: '',
             });
             const errors = validateConnectionSettings(settings);
-            expect(errors).toContain('Custom provider requires an endpoint URL');
+            expect(errors).toContain('Other S3-compatible provider requires an endpoint URL');
         });
 
         /**
@@ -347,16 +347,16 @@ describe('S3Config', () => {
             expect(getProviderDisplayName('aws')).toBe('AWS S3');
         });
 
-        it('should return correct display name for MinIO', () => {
-            expect(getProviderDisplayName('minio')).toBe('MinIO');
+        it('should return correct display name for RustFS', () => {
+            expect(getProviderDisplayName('rustfs')).toBe('RustFS');
         });
 
         it('should return correct display name for R2', () => {
             expect(getProviderDisplayName('r2')).toBe('Cloudflare R2');
         });
 
-        it('should return correct display name for custom', () => {
-            expect(getProviderDisplayName('custom')).toBe('Custom S3-compatible');
+        it('should return correct display name for other S3-compatible', () => {
+            expect(getProviderDisplayName('custom')).toBe('Other S3-compatible');
         });
 
         /**
