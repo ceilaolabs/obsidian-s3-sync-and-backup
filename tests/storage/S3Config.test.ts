@@ -13,7 +13,7 @@ import {
     validateConnectionSettings,
     getProviderDisplayName,
 } from '../../src/storage/S3Config';
-import { S3SyncBackupSettings } from '../../src/types';
+import { S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../../src/types';
 
 /**
  * Creates a minimal settings object for testing
@@ -337,6 +337,36 @@ describe('S3Config', () => {
             expect(errors).toContain('Secret Access Key is required');
             expect(errors.length).toBe(3);
         });
+
+        /**
+         * Legacy `'minio'` provider strings persisted in older `data.json`
+         * files (the dropdown option was removed in favour of RustFS) must be
+         * rejected at runtime rather than silently falling through every
+         * provider switch in the module.
+         */
+        it('should reject legacy minio provider value', () => {
+            const settings = createTestSettings({
+                provider: 'minio' as unknown as S3SyncBackupSettings['provider'],
+            });
+            const errors = validateConnectionSettings(settings);
+            expect(errors).toContain(
+                'Unsupported provider "minio". Re-select a provider in Settings.',
+            );
+        });
+
+        /**
+         * Any unknown provider string (e.g. typo, future-removed value) must
+         * also be rejected. Documents the validator's contract for callers.
+         */
+        it('should reject arbitrary unknown provider value', () => {
+            const settings = createTestSettings({
+                provider: 'unknown-vendor' as unknown as S3SyncBackupSettings['provider'],
+            });
+            const errors = validateConnectionSettings(settings);
+            expect(errors).toContain(
+                'Unsupported provider "unknown-vendor". Re-select a provider in Settings.',
+            );
+        });
     });
 
     describe('getProviderDisplayName', () => {
@@ -365,6 +395,19 @@ describe('S3Config', () => {
         it('should return Unknown for invalid provider', () => {
             // @ts-expect-error - testing invalid input
             expect(getProviderDisplayName('invalid')).toBe('Unknown');
+        });
+    });
+
+    /**
+     * The settings dropdown is rendered by iterating `Object.entries(S3_PROVIDER_NAMES)`
+     * (see `src/settings.ts`). For non-integer string keys, JavaScript guarantees
+     * iteration in insertion order, so the order in which entries are declared
+     * in `types.ts` is the order users see in the UI. This test pins down the
+     * intended order so accidental reordering surfaces as a test failure.
+     */
+    describe('S3_PROVIDER_NAMES dropdown order', () => {
+        it('exposes providers in the documented dropdown order', () => {
+            expect(Object.keys(S3_PROVIDER_NAMES)).toEqual(['aws', 'r2', 'rustfs', 'custom']);
         });
     });
 });

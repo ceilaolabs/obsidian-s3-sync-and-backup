@@ -20,7 +20,7 @@
  */
 
 import { S3ClientConfig } from '@aws-sdk/client-s3';
-import { S3ProviderType, S3SyncBackupSettings } from '../types';
+import { S3ProviderType, S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../types';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
 // Provider endpoints are determined dynamically based on settings
@@ -169,6 +169,17 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
  */
 export function validateConnectionSettings(settings: S3SyncBackupSettings): string[] {
     const errors: string[] = [];
+
+    // Provider must be one of the supported types. TypeScript's `S3ProviderType`
+    // only narrows at compile time — at runtime, persisted `data.json` files
+    // from earlier plugin versions can carry stale provider strings (e.g. the
+    // removed `'minio'` value) that would silently fall through every switch
+    // in this module. Catch those here before any S3 client is constructed.
+    if (!Object.prototype.hasOwnProperty.call(S3_PROVIDER_NAMES, settings.provider)) {
+        errors.push(
+            `Unsupported provider "${settings.provider}". Re-select a provider in Settings.`,
+        );
+    }
 
     if (!settings.bucket) {
         errors.push('Bucket name is required');
