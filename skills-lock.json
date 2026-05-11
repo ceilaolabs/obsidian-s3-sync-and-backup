@@ -16,11 +16,6 @@
       "sourceType": "github",
       "computedHash": "2607fc60629b82b257136dd2a7a373f0a4466c0b49df7746d845d59313c99b21"
     },
-    "obsidian-cli": {
-      "source": "kepano/obsidian-skills",
-      "sourceType": "github",
-      "computedHash": "f46ae626875f7e47c410c2ee93896c4526024ebe127719e8fb430261b5677edc"
-    },
     "prd": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
