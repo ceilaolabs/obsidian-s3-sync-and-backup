@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.0...4.0.1) (2026-05-11)
+
+
+### Miscellaneous
+
+* **deps:** bump fast-xml-parser from 5.5.8 to 5.7.2 in the npm_and_yarn group across 1 directory ([72f0d51](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/72f0d51f844261428ed962da56d12c242f59583f))
+* remove obsidian-cli skill and update skills-lock.json ([26e55f5](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/26e55f57c3ac9d6ef4c974da2a3539e0e6265c69))
+
 ## [4.0.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/3.4.0...4.0.0) (2026-05-04)
 
 
