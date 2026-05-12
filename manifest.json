@@ -2,7 +2,7 @@
 	"id": "simple-storage-sync-and-backup",
 	"name": "S3 Sync & Backup",
 	"version": "4.0.3",
-	"minAppVersion": "1.0.0",
+	"minAppVersion": "1.8.7",
 	"description": "Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, Cloudflare R2, RustFS, etc.) with optional end-to-end encryption.",
 	"author": "Ceilão Labs",
 	"authorUrl": "https://github.com/ceilaolabs",
