@@ -34,7 +34,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 
 ### Manual Installation
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/releases).
-2. Create the folder: `<VaultPath>/.obsidian/plugins/s3-sync-and-backup/`
+2. Create the folder: `<VaultPath>/.obsidian/plugins/simple-storage-sync-and-backup/`
 3. Copy the downloaded files into this folder.
 4. Reload Obsidian and enable the plugin in **Settings** → **Community plugins**.
 
@@ -191,7 +191,7 @@ your-bucket/
     └── backup-2024-12-24T14-30-00/
 ```
 
-> **Note:** The plugin's own settings directory (`.obsidian/plugins/s3-sync-and-backup/`) is never uploaded to S3, regardless of exclude pattern configuration.
+> **Note:** The plugin's own settings directory (`.obsidian/plugins/simple-storage-sync-and-backup/`) is never uploaded to S3, regardless of exclude pattern configuration.
 
 ---
 
@@ -250,7 +250,7 @@ Yes, but existing files under the old prefix won't be moved. The plugin will tre
 
 <details>
 <summary><strong>What files are excluded from sync?</strong></summary>
-By default, <code>**/workspace*</code> and <code>.trash/**</code> are excluded. You can customize this in <strong>Settings → Advanced → Exclude patterns</strong>. The plugin's own settings directory (<code>.obsidian/plugins/s3-sync-and-backup/</code>) is always excluded and cannot be overridden.
+By default, <code>**/workspace*</code> and <code>.trash/**</code> are excluded. You can customize this in <strong>Settings → Advanced → Exclude patterns</strong>. The plugin's own settings directory (<code>.obsidian/plugins/simple-storage-sync-and-backup/</code>) is always excluded and cannot be overridden.
 </details>
 
 ---

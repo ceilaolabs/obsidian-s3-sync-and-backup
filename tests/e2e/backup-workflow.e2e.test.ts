@@ -313,7 +313,7 @@ describeIfS3('Backup workflow E2E', () => {
 
 		it('excludes the plugin settings directory from backups even when the file exists in the vault', async () => {
 			const device = await createInitializedDevice();
-			device.vault.seed('.obsidian/plugins/s3-sync-and-backup/data.json', '{"token":"secret"}');
+			device.vault.seed('.obsidian/plugins/simple-storage-sync-and-backup/data.json', '{"token":"secret"}');
 			device.vault.seed('notes/keep.md', 'safe content');
 
 			const result = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
@@ -324,9 +324,9 @@ describeIfS3('Backup workflow E2E', () => {
 			expect(result.filesBackedUp).toBe(1);
 			expect(backupObjects).toContain(getBackupObjectKey(device, result.backupName, 'notes/keep.md'));
 			expect(backupObjects).not.toContain(
-				getBackupObjectKey(device, result.backupName, '.obsidian/plugins/s3-sync-and-backup/data.json'),
+				getBackupObjectKey(device, result.backupName, '.obsidian/plugins/simple-storage-sync-and-backup/data.json'),
 			);
-			expect(manifest.checksums).not.toHaveProperty('.obsidian/plugins/s3-sync-and-backup/data.json');
+			expect(manifest.checksums).not.toHaveProperty('.obsidian/plugins/simple-storage-sync-and-backup/data.json');
 		});
 	});
 

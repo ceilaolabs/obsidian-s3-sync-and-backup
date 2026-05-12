@@ -312,7 +312,7 @@ export function isConflictFile(path: string): boolean {
  * The plugin's manifest ID, used to construct the hardcoded exclusion path.
  * Must match the `id` field in `manifest.json`.
  */
-const PLUGIN_ID = 's3-sync-and-backup';
+const PLUGIN_ID = 'simple-storage-sync-and-backup';
 
 /**
  * Check whether a vault-relative path falls inside this plugin's own settings directory.

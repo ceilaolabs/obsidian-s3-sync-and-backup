@@ -1,5 +1,5 @@
 {
-	"id": "s3-sync-and-backup",
+	"id": "simple-storage-sync-and-backup",
 	"name": "S3 Sync & Backup",
 	"version": "3.4.0",
 	"minAppVersion": "1.0.0",

@@ -54,7 +54,7 @@ To test your changes in a live Obsidian instance:
 1.  Create a test vault in Obsidian (or use an existing one).
 2.  Create the plugin folder:
     ```
-    <VaultPath>/.obsidian/plugins/s3-sync-and-backup/
+    <VaultPath>/.obsidian/plugins/simple-storage-sync-and-backup/
     ```
 3.  Build the plugin: `npm run build`
 4.  Copy `main.js`, `manifest.json`, and `styles.css` into the plugin folder.

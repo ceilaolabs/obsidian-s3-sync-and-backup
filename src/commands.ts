@@ -134,7 +134,7 @@ export function registerCommands(plugin: S3SyncBackupPlugin): void {
         callback: () => {
             // Open settings to backup section
             (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
-            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('s3-sync-and-backup');
+            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('simple-storage-sync-and-backup');
         },
     });
 
@@ -144,7 +144,7 @@ export function registerCommands(plugin: S3SyncBackupPlugin): void {
         name: 'Open settings',
         callback: () => {
             (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
-            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('s3-sync-and-backup');
+            (plugin.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('simple-storage-sync-and-backup');
         },
     });
 }
