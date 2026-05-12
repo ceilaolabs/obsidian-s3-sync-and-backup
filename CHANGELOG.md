@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.1...4.0.2) (2026-05-12)
+
+
+### Miscellaneous
+
+* **deps:** bump fast-uri from 3.1.0 to 3.1.2 in the npm_and_yarn group across 1 directory ([ab54e45](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ab54e45423d3663224a6a8934ec57ef64a38906c))
+* **deps:** bump fast-uri in the npm_and_yarn group across 1 directory ([26418b3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/26418b30f9157b441e61ce075eefe7c76195f37c))
+
 ## [4.0.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.0...4.0.1) (2026-05-11)
 
 
