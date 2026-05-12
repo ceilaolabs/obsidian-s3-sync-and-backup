@@ -244,15 +244,15 @@ describe('Path Utils', () => {
 
     describe('isPluginOwnPath', () => {
         it('should match data.json inside plugin directory', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup/data.json', '.obsidian')).toBe(true);
+            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup/data.json', '.obsidian')).toBe(true);
         });
 
         it('should match main.js inside plugin directory', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup/main.js', '.obsidian')).toBe(true);
+            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup/main.js', '.obsidian')).toBe(true);
         });
 
         it('should match the plugin directory itself', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup', '.obsidian')).toBe(true);
+            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup', '.obsidian')).toBe(true);
         });
 
         it('should not match other plugin directories', () => {
@@ -265,12 +265,12 @@ describe('Path Utils', () => {
         });
 
         it('should work with custom configDir', () => {
-            expect(isPluginOwnPath('.config/plugins/s3-sync-and-backup/data.json', '.config')).toBe(true);
-            expect(isPluginOwnPath('.obsidian/plugins/s3-sync-and-backup/data.json', '.config')).toBe(false);
+            expect(isPluginOwnPath('.config/plugins/simple-storage-sync-and-backup/data.json', '.config')).toBe(true);
+            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup/data.json', '.config')).toBe(false);
         });
 
         it('should normalize backslashes in path', () => {
-            expect(isPluginOwnPath('.obsidian\\plugins\\s3-sync-and-backup\\data.json', '.obsidian')).toBe(true);
+            expect(isPluginOwnPath('.obsidian\\plugins\\simple-storage-sync-and-backup\\data.json', '.obsidian')).toBe(true);
         });
     });
 });

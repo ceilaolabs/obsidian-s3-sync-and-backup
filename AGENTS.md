@@ -4,7 +4,7 @@
 
 **Obsidian S3 Sync & Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, Cloudflare R2, RustFS) with optional end-to-end encryption.
 
-**Plugin ID:** `s3-sync-and-backup`
+**Plugin ID:** `simple-storage-sync-and-backup`
 
 | Attribute | Value |
 |-----------|-------|
@@ -169,7 +169,7 @@ Uses `eslint-plugin-obsidianmd`:
 ### Manual Testing
 
 1. Run `npm run build`
-2. Copy `main.js`, `manifest.json`, `styles.css` to: `<Vault>/.obsidian/plugins/s3-sync-and-backup/`
+2. Copy `main.js`, `manifest.json`, `styles.css` to: `<Vault>/.obsidian/plugins/simple-storage-sync-and-backup/`
 3. Reload Obsidian and enable in **Settings → Community plugins**
 
 ## Documentation

@@ -548,7 +548,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 			name: 'Open settings',
 			callback: () => {
 				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.open();
-				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('s3-sync-and-backup');
+				(this.app as unknown as { setting: { open: () => void; openTabById: (id: string) => void } }).setting.openTabById('simple-storage-sync-and-backup');
 			},
 		});
 
