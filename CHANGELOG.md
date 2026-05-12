@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.2...4.0.3) (2026-05-12)
+
+
+### Bug Fixes
+
+* **manifest:** rename plugin id to pass new community store validation ([ead0499](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ead0499db37171731acd71ffbefbb01f82a3db07))
+* **manifest:** rename plugin id to pass new community store validation ([91fbfa0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/91fbfa0e68fe834d5778190a375a4ffadc0f8091))
+
 ## [4.0.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.1...4.0.2) (2026-05-12)
 
 
