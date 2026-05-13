@@ -37,10 +37,16 @@ on:
         type: boolean
         default: true
 
-# Required permissions for release-please to create PRs and releases
+# Required permissions for release-please to create PRs and releases.
+# `id-token: write` and `attestations: write` are required by the
+# `actions/attest-build-provenance` step in the build-and-publish job below;
+# they let the workflow request a Sigstore OIDC token and write the resulting
+# build-provenance attestations to the repository's attestations index.
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
+  attestations: write
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -153,6 +159,22 @@ jobs:
             [ -f "$file" ] || { echo "[X] $file not found"; exit 1; }
           done
           echo "[OK] All release artifacts present"
+
+      # ---------------------------------------------------------------------------
+      # Generate Build Provenance Attestations
+      # ---------------------------------------------------------------------------
+      # Cryptographically signs the release artefacts so users (and the
+      # Obsidian community-plugin review) can verify they were built from
+      # this repository's source via this workflow. Attestations are written
+      # to the repo's attestations index and are visible on the Release page.
+      # See: https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations
+      # ---------------------------------------------------------------------------
+      - name: Generate Artifact Attestations
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            main.js
+            styles.css
 
       # ---------------------------------------------------------------------------
       # Upload Release Assets
