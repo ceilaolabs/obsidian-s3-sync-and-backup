@@ -8,6 +8,13 @@ export default tseslint.config(
 		languageOptions: {
 			globals: {
 				...globals.browser,
+				// Obsidian-provided globals for popout-window compatibility.
+				// `activeDocument` resolves to the focused document (main or
+				// popout) and `activeWindow` to the focused window. The lint
+				// rules in `eslint-plugin-obsidianmd` push code toward these
+				// over the bare `document` / `window`.
+				activeDocument: "readonly",
+				activeWindow: "readonly",
 			},
 			parserOptions: {
 				projectService: {

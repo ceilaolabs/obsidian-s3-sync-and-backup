@@ -283,7 +283,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			buttonEl.textContent = '✓ connected';
 
 			// Reset button text after delay
-			setTimeout(() => {
+			window.setTimeout(() => {
 				buttonEl.textContent = originalText;
 				buttonEl.disabled = false;
 			}, 2000);
@@ -294,7 +294,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			buttonEl.disabled = false;
 
 			// Reset button text after delay
-			setTimeout(() => {
+			window.setTimeout(() => {
 				buttonEl.textContent = originalText;
 			}, 2000);
 		}
