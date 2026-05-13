@@ -199,8 +199,12 @@ your-bucket/
 
 - **Encryption algorithm:** XSalsa20-Poly1305 (via tweetnacl) with Argon2id key derivation (via hash-wasm).
 - **Content identity:** SHA-256 fingerprints of plaintext content, stored in S3 custom metadata.
-- **No telemetry:** The plugin makes no network calls except to your configured S3 endpoint.
-- **No remote code execution:** All encryption and hashing runs locally in the browser.
+- **Network use:** Outbound network requests go **only** to the S3-compatible endpoint you configure (AWS S3, Cloudflare R2, or RustFS) over HTTPS. No third-party services, telemetry endpoints, analytics, or update servers are contacted. The plugin performs the following kinds of network activity, all under your control:
+    - **Periodic sync** polls your bucket on a user-configurable interval (default 5 minutes, range 1–30 minutes). Controlled by the *Enable sync* and *Auto-sync* toggles plus the *Sync interval* dropdown in Settings — turning either toggle off stops all scheduled sync traffic.
+    - **Periodic backups** snapshot your vault on a user-configurable schedule (default daily, options from hourly to weekly). Controlled by the *Enable backups* toggle and the *Backup interval* dropdown.
+    - **Manual operations** (sync now, backup now, test connection, download backup) only run when you invoke them from the command palette, status bar, or settings.
+- **No telemetry:** The plugin sends no usage data, error reports, or identifiers anywhere. Disabling sync and backups stops all network activity completely.
+- **No remote code execution:** All encryption and hashing runs locally in the browser. The plugin never fetches or evaluates code from the network.
 - **Credential protection:** S3 credentials and saved passphrases are stored in Obsidian's `data.json`, which is hardcoded-excluded from sync to prevent leakage.
 
 ---
