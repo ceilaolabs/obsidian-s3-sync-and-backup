@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.5](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.4...4.0.5) (2026-05-13)
+
+
+### Miscellaneous
+
+* map plugin version 4.0.4 to minAppVersion 1.8.7 ([3c08c33](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/3c08c337f539b8413e2da23e0a8f9f73cbcc8e3d))
+* map plugin version 4.0.4 to minAppVersion 1.8.7 in versions.json ([a9e86f1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/a9e86f14a8130458f0d45b551087a08e5f4bb90f))
+
 ## [4.0.4](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.3...4.0.4) (2026-05-13)
 
 
