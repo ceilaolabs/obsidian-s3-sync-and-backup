@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.0.4](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.3...4.0.4) (2026-05-13)
+
+
+### Bug Fixes
+
+* address Obsidian community-store automated-review findings ([e0afb12](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e0afb12ba0121881f8ed005cc3c25b0ee79127fd))
+* **manifest:** bump minAppVersion to 1.8.7 to match used APIs ([db87c15](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/db87c157800ce6a4150d681c4f84a88cf36d04d1))
+* **ui:** use activeDocument and window.setTimeout for popout compatibility ([59d85db](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/59d85db83797c3b433ca2b4672c5903227d58a93))
+
+
+### Documentation
+
+* **readme:** expand network-use disclosure for scheduled background activity ([d5c40ff](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/d5c40ff09d22b6f9f1ab08c29f4a6965ecce4ef3))
+
 ## [4.0.3](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.2...4.0.3) (2026-05-12)
 
 

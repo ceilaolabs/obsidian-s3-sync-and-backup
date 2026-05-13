@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-s3-sync-and-backup",
-	"version": "4.0.3",
+	"version": "4.0.4",
 	"description": "Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, Cloudflare R2, RustFS, etc.) with optional end-to-end encryption.",
 	"main": "main.js",
 	"type": "module",
