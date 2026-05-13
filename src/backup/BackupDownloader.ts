@@ -241,12 +241,12 @@ export class BackupDownloader {
         // to a hidden <a> element, programmatically click it, then immediately clean up.
         // This is the only cross-browser way to trigger a file-save dialog from JS.
         const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
+        const link = activeDocument.createElement('a');
         link.href = url;
         link.download = `${backupName}.zip`;
-        document.body.appendChild(link);
+        activeDocument.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
+        activeDocument.body.removeChild(link);
         URL.revokeObjectURL(url);
     }
 }
