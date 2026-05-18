@@ -48,7 +48,9 @@ interface MockExecutor {
 }
 
 interface MockJournal {
-	setMetadata: jest.Mock<Promise<void>, [string, number]>;
+	setMetadata: jest.Mock<Promise<void>, [string, number | string]>;
+	getMetadata: jest.Mock<Promise<string | number | undefined>, [string]>;
+	clear: jest.Mock<Promise<void>, []>;
 }
 
 interface MockChangeTracker {
@@ -136,6 +138,8 @@ function createEngineContext(overrides: Partial<S3SyncBackupSettings> = {}): Eng
 	const s3Provider: MockS3Provider = { kind: 's3-provider' };
 	const journal: MockJournal = {
 		setMetadata: jest.fn().mockResolvedValue(undefined),
+		getMetadata: jest.fn().mockResolvedValue(undefined),
+		clear: jest.fn().mockResolvedValue(undefined),
 	};
 	const pathCodec: MockPathCodec = {
 		updatePrefix: jest.fn(),
@@ -330,7 +334,9 @@ describe('SyncEngine', () => {
 
 			await context.engine.sync();
 
-			expect(context.journal.setMetadata).not.toHaveBeenCalled();
+			// Note: setMetadata may still be called to record the destination fingerprint;
+			// only the lastSuccessfulSyncAt key must be skipped on failure.
+			expect(context.journal.setMetadata).not.toHaveBeenCalledWith('lastSuccessfulSyncAt', expect.anything());
 		});
 
 		it('wraps an unexpected planner Error into a failed SyncResult', async () => {
@@ -374,6 +380,259 @@ describe('SyncEngine', () => {
 
 			nowSpy.mockRestore();
 			consoleErrorSpy.mockRestore();
+		});
+	});
+
+	/**
+	 * Covers SyncEngine's destination-change detection: when the sync journal was built
+	 * against a different S3 destination (bucket / endpoint / region / prefix / provider),
+	 * baselines from the old destination would mis-classify untouched local files as
+	 * "remotely deleted" and trigger mass `delete-local` actions. The engine must detect
+	 * the mismatch via a stored destination fingerprint and clear the stale baselines
+	 * before planning runs.
+	 */
+	describe('destination fingerprint', () => {
+		it('records the current destination fingerprint on the first sync', async () => {
+			const context = createEngineContext({
+				provider: 'aws',
+				region: 'us-east-1',
+				endpoint: '',
+				bucket: 'my-bucket',
+				syncPrefix: 'vault',
+			});
+
+			await context.engine.sync();
+
+			const expected = JSON.stringify({
+				provider: 'aws',
+				region: 'us-east-1',
+				endpoint: '',
+				bucket: 'my-bucket',
+				prefix: 'vault',
+			});
+			expect(context.journal.setMetadata).toHaveBeenCalledWith('destinationFingerprint', expected);
+			expect(context.journal.clear).not.toHaveBeenCalled();
+		});
+
+		it('clears stale baselines and records the new fingerprint when the destination changes', async () => {
+			const context = createEngineContext({ bucket: 'new-bucket', syncPrefix: 'vault' });
+			const stale = JSON.stringify({
+				provider: 'aws',
+				region: 'us-east-1',
+				endpoint: '',
+				bucket: 'old-bucket',
+				prefix: 'vault',
+			});
+			context.journal.getMetadata.mockResolvedValueOnce(stale);
+
+			await context.engine.sync();
+
+			expect(context.journal.clear).toHaveBeenCalledTimes(1);
+			const expected = JSON.stringify({
+				provider: 'aws',
+				region: 'us-east-1',
+				endpoint: '',
+				bucket: 'new-bucket',
+				prefix: 'vault',
+			});
+			expect(context.journal.setMetadata).toHaveBeenCalledWith('destinationFingerprint', expected);
+			// Clear must happen before the planner runs so stale baselines cannot drive a destructive plan.
+			expect(context.journal.clear.mock.invocationCallOrder[0]).toBeLessThan(
+				context.planner.buildPlan.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+			);
+		});
+
+		it('aborts when the destination changes between the initial check and plan completion', async () => {
+			// The reconcile step runs before the planner, but the planner does async S3
+			// I/O during which the user could change destination-affecting settings.  A
+			// post-plan re-check must catch that and refuse to execute against a plan
+			// that was built against a different destination than the one we validated.
+			const context = createEngineContext({ bucket: 'bucket-a' });
+			const plannerDeferred = createDeferred<SyncPlanItem[]>();
+			context.planner.buildPlan.mockReturnValueOnce(plannerDeferred.promise);
+
+			const syncPromise = context.engine.sync();
+			// Simulate `saveSettings` flipping the destination while the planner is awaiting S3.
+			context.engine.updateSettings(createSettings({ bucket: 'bucket-b' }));
+			plannerDeferred.resolve([createPlanItem('notes/a.md', 'upload')]);
+
+			const result = await syncPromise;
+
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.message).toMatch(/destination changed/i);
+		});
+
+		it('aborts before planning when clearing stale baselines fails', async () => {
+			// If clear() throws, the destructive plan guard can't run and the journal is
+			// in an uncertain state.  The engine must abort with a contextualised error
+			// rather than fall through to a planner that would see stale baselines.
+			const context = createEngineContext({ bucket: 'new-bucket' });
+			context.journal.getMetadata.mockResolvedValueOnce(JSON.stringify({
+				provider: 'aws', region: 'us-east-1', endpoint: '', bucket: 'old-bucket', prefix: 'vault',
+			}));
+			context.journal.clear.mockRejectedValueOnce(new Error('IDB write failure'));
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const result = await context.engine.sync();
+
+			expect(context.planner.buildPlan).not.toHaveBeenCalled();
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.message).toMatch(/clearing stale journal baselines.*IDB write failure/i);
+			consoleErrorSpy.mockRestore();
+		});
+
+		it('aborts before planning when recording the new destination fingerprint fails', async () => {
+			const context = createEngineContext();
+			context.journal.setMetadata.mockRejectedValueOnce(new Error('IDB write failure'));
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const result = await context.engine.sync();
+
+			expect(context.planner.buildPlan).not.toHaveBeenCalled();
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.message).toMatch(/recording new destination fingerprint.*IDB write failure/i);
+			consoleErrorSpy.mockRestore();
+		});
+
+		it('does not clear or rewrite the fingerprint when the destination is unchanged', async () => {
+			const context = createEngineContext({ bucket: 'same-bucket', syncPrefix: 'vault' });
+			const current = JSON.stringify({
+				provider: 'aws',
+				region: 'us-east-1',
+				endpoint: '',
+				bucket: 'same-bucket',
+				prefix: 'vault',
+			});
+			context.journal.getMetadata.mockResolvedValueOnce(current);
+
+			await context.engine.sync();
+
+			expect(context.journal.clear).not.toHaveBeenCalled();
+			expect(context.journal.setMetadata).not.toHaveBeenCalledWith('destinationFingerprint', expect.anything());
+		});
+	});
+
+	/**
+	 * Covers SyncEngine's plan-time safety guard: when a planner output contains an
+	 * unusually high number of `delete-local` actions and the destination has no prior
+	 * successful sync recorded, the engine must refuse to execute and surface a clear
+	 * error.  This is the belt-and-braces backstop against future bugs that would
+	 * otherwise produce a destructive plan slipping past the destination-fingerprint
+	 * invalidation.
+	 */
+	describe('destructive plan guard', () => {
+		function createDeletePlan(count: number): SyncPlanItem[] {
+			return Array.from({ length: count }, (_, i) => ({
+				path: `notes/file-${i}.md`,
+				action: 'delete-local' as const,
+				reason: 'baseline says remotely deleted',
+			}));
+		}
+
+		it('blocks execution when a new destination produces many delete-local actions', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce(createDeletePlan(50));
+
+			const result = await context.engine.sync();
+
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0]?.message).toMatch(/destructive plan/i);
+			expect(result.errors[0]?.recoverable).toBe(false);
+		});
+
+		it('allows delete-local actions when the destination has a prior successful sync', async () => {
+			const context = createEngineContext();
+			// Stored fingerprint matches current so the planner is invoked; a prior
+			// lastSuccessfulSyncAt signals this destination has been seen before, so
+			// large deletions are legitimate cleanup (e.g. another device wiped files).
+			context.journal.getMetadata.mockImplementation(async (key: string) => {
+				if (key === 'destinationFingerprint') {
+					return JSON.stringify({
+						provider: 'aws',
+						region: 'us-east-1',
+						endpoint: '',
+						bucket: '',
+						prefix: 'vault',
+					});
+				}
+				if (key === 'lastSuccessfulSyncAt') {
+					return 1_700_000_000_000;
+				}
+				return undefined;
+			});
+			context.planner.buildPlan.mockResolvedValueOnce(createDeletePlan(50));
+
+			await context.engine.sync();
+
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
+		});
+
+		it('blocks even a single delete-local on a destination with no prior successful sync', async () => {
+			// Without baselines, the decision table cannot legitimately produce any
+			// delete-local action (deletion requires `L= / R0 + hasBaseline`).  So any
+			// delete on a never-synced destination signals a bug and must be refused
+			// regardless of how small it is.
+			const context = createEngineContext();
+			const plan: SyncPlanItem[] = [
+				...createDeletePlan(1),
+				...Array.from({ length: 99 }, (_, i) => createPlanItem(`notes/upload-${i}.md`, 'upload')),
+			];
+			context.planner.buildPlan.mockResolvedValueOnce(plan);
+
+			const result = await context.engine.sync();
+
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.message).toMatch(/destructive plan/i);
+		});
+
+		it('does not block plans without any delete-local actions', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce([
+				createPlanItem('notes/a.md', 'upload'),
+				createPlanItem('notes/b.md', 'download'),
+			]);
+
+			await context.engine.sync();
+
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not block when the plan is empty', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce([]);
+
+			await context.engine.sync();
+
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
+		});
+
+		it('returns a fully populated blocked SyncResult shape (zeroed counters, single error)', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce(createDeletePlan(50));
+
+			const result = await context.engine.sync();
+
+			expect(result).toMatchObject({
+				success: false,
+				filesUploaded: 0,
+				filesDownloaded: 0,
+				filesDeleted: 0,
+				filesAdopted: 0,
+				filesForgotten: 0,
+				conflicts: [],
+			});
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0]).toMatchObject({
+				path: '',
+				action: 'delete-local',
+				recoverable: false,
+			});
 		});
 	});
 
