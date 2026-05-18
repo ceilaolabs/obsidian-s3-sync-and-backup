@@ -40,6 +40,12 @@ function createSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBa
 	};
 }
 
+/**
+ * Covers the pure-function destination fingerprint used by SyncEngine's Phase 0
+ * reconciliation: stability for identical settings, sensitivity to each
+ * destination-affecting field, prefix normalisation, delimiter-collision
+ * resistance, and credential-field exclusion.
+ */
 describe('computeDestinationFingerprint', () => {
 	it('returns the same string for two identical destinations', () => {
 		const a = computeDestinationFingerprint(createSettings());
@@ -88,6 +94,24 @@ describe('computeDestinationFingerprint', () => {
 	it('changes when the provider changes', () => {
 		const a = computeDestinationFingerprint(createSettings({ provider: 'aws' }));
 		const b = computeDestinationFingerprint(createSettings({ provider: 'r2' }));
+
+		expect(a).not.toBe(b);
+	});
+
+	it('does not collide when a field value contains the delimiter or key characters', () => {
+		// Naive `key=value|key=value` concatenation collides when a user-supplied
+		// field (e.g. syncPrefix) embeds `|` or `=`.  Two distinct destinations
+		// constructed below would otherwise produce identical fingerprints.
+		const a = computeDestinationFingerprint(createSettings({
+			endpoint: 'https://e|bucket=my-bucket|prefix=one',
+			bucket: 'my-bucket',
+			syncPrefix: 'two',
+		}));
+		const b = computeDestinationFingerprint(createSettings({
+			endpoint: 'https://e',
+			bucket: 'my-bucket',
+			syncPrefix: 'one|bucket=my-bucket|prefix=two',
+		}));
 
 		expect(a).not.toBe(b);
 	});

@@ -4,10 +4,18 @@
  * Thin orchestrator that coordinates the three-way reconciliation sync:
  *   1. Acquire mutex (prevent concurrent syncs)
  *   2. Signal ChangeTracker that sync is active
- *   3. Build a plan via {@link SyncPlanner}
- *   4. Execute the plan via {@link SyncExecutor}
- *   5. Record `lastSuccessfulSyncAt` in journal metadata
- *   6. Release mutex and signal ChangeTracker
+ *   3. Phase 0 — Reconcile destination fingerprint: detect when the configured
+ *      S3 destination differs from the journal's last-known destination and
+ *      clear stale baselines so they cannot drive a destructive plan
+ *   4. Phase 1 — Build a plan via {@link SyncPlanner}
+ *   5. Phase 1.4 — Re-check that the destination has not changed during planning;
+ *      refuse the plan if the user mutated settings while the planner was
+ *      awaiting S3
+ *   6. Phase 1.5 — Refuse plans that would `delete-local` files against a
+ *      destination with no prior successful sync (belt-and-braces safety net)
+ *   7. Phase 2 — Execute the plan via {@link SyncExecutor}
+ *   8. Phase 3 — Record `lastSuccessfulSyncAt` in journal metadata on success
+ *   9. Release mutex and signal ChangeTracker
  *
  * All heavy lifting (state discovery, classification, decision-making,
  * file I/O, S3 operations) lives in the planner and executor modules.
@@ -35,23 +43,30 @@ import { computeDestinationFingerprint } from './DestinationFingerprint';
  */
 const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
 
-/**
- * Absolute upper bound on `delete-local` actions that may execute against a
- * destination with no prior successful sync.  Tuned to be safely above any
- * legitimate first-sync scenario (which produces no deletions at all) while
- * still catching mass-delete bugs on small-to-medium vaults.
- */
-const DESTRUCTIVE_DELETE_ABSOLUTE_THRESHOLD = 10;
-
-/**
- * Ratio threshold for `delete-local` actions relative to the full plan size.
- * Catches small vaults where the absolute count alone would not trigger
- * (e.g. 5 deletions in a 5-item plan = 100 %).
- */
-const DESTRUCTIVE_DELETE_RATIO_THRESHOLD = 0.5;
-
 /** Journal metadata key holding the epoch-ms time of the last successful sync. */
 const LAST_SUCCESSFUL_SYNC_KEY = 'lastSuccessfulSyncAt';
+
+/**
+ * Run a journal operation and rewrap any thrown error with a phase description.
+ *
+ * The outer `sync()` catch logs only the final message, so without a phase
+ * description an IndexedDB failure surfaces as a bare "Sync failed: <message>"
+ * with no indication of which journal touchpoint failed.  Wrapping each step
+ * preserves the underlying error message while making the operation visible.
+ *
+ * @param phase     - Short human description of what was being attempted.
+ * @param operation - Thunk producing the journal call to await.
+ * @returns The operation's resolved value.
+ * @throws An `Error` whose message includes the phase and the underlying message.
+ */
+async function withJournalContext<T>(phase: string, operation: () => Promise<T>): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		const cause = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed ${phase}: ${cause}`);
+	}
+}
 
 /**
  * SyncEngine — orchestrates a complete sync cycle.
@@ -129,8 +144,11 @@ export class SyncEngine {
 			// vault pointed at a new bucket/prefix would otherwise reuse baselines from the
 			// previous destination and trigger a destructive plan (untouched local files
 			// classified as "remotely deleted").  Detect the mismatch and clear stale
-			// baselines before the planner runs.
-			await this.reconcileDestinationFingerprint();
+			// baselines before the planner runs.  The fingerprint captured here is also
+			// the snapshot we re-validate against after planning to close the
+			// settings-mutated-mid-sync race.
+			const startFingerprint = computeDestinationFingerprint(this.settings);
+			await this.reconcileDestinationFingerprint(startFingerprint);
 
 			// Phase 1 — Plan
 			const planner = new SyncPlanner(
@@ -143,6 +161,17 @@ export class SyncEngine {
 			);
 			const plan = await planner.buildPlan();
 			this.log(`Plan contains ${plan.length} action(s)`);
+
+			// Phase 1.4 — Destination re-check.  The planner does async S3 I/O during
+			// which `updateSettings` could mutate this.settings / pathCodec / s3Provider
+			// to point at a different destination.  If that happened, the plan was built
+			// against a destination we never validated.  Refuse to execute it.
+			if (computeDestinationFingerprint(this.settings) !== startFingerprint) {
+				return this.buildBlockedResult(
+					'Aborted: destination changed during sync — settings were updated while the planner was running. ' +
+					'The pending sync was discarded; the next cycle will re-plan against the new destination.',
+				);
+			}
 
 			// Phase 1.5 — Safety guard.  Refuse any plan that wants to mass-delete local
 			// files when this destination has never completed a successful sync.  This is a
@@ -206,10 +235,15 @@ export class SyncEngine {
 	 *
 	 * The new fingerprint is also recorded on a true first sync (no stored value) so
 	 * subsequent destination changes are detectable.
+	 *
+	 * @param current - Fingerprint of the destination we are about to sync against,
+	 *   pre-computed by the caller so it can be reused as the snapshot for the
+	 *   post-plan recheck (avoids recomputing and avoids reading mutated settings).
 	 */
-	private async reconcileDestinationFingerprint(): Promise<void> {
-		const current = computeDestinationFingerprint(this.settings);
-		const stored = await this.journal.getMetadata(DESTINATION_FINGERPRINT_KEY);
+	private async reconcileDestinationFingerprint(current: string): Promise<void> {
+		const stored = await withJournalContext('reading stored destination fingerprint',
+			() => this.journal.getMetadata(DESTINATION_FINGERPRINT_KEY),
+		);
 
 		if (stored === current) {
 			return;
@@ -217,20 +251,26 @@ export class SyncEngine {
 
 		if (stored !== undefined) {
 			this.log('Destination changed — clearing stale journal baselines');
-			await this.journal.clear();
+			await withJournalContext('clearing stale journal baselines',
+				() => this.journal.clear(),
+			);
 		}
 
-		await this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, current);
+		await withJournalContext('recording new destination fingerprint',
+			() => this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, current),
+		);
 	}
 
 	/**
-	 * Inspect a freshly built plan and return an error message when it would mass-delete
+	 * Inspect a freshly built plan and return an error message when it would delete
 	 * local files against a destination that has no prior successful sync recorded.
 	 *
-	 * Triggers on either condition:
-	 * - Absolute count: more than {@link DESTRUCTIVE_DELETE_ABSOLUTE_THRESHOLD} `delete-local` actions.
-	 * - Ratio: `delete-local` actions make up at least {@link DESTRUCTIVE_DELETE_RATIO_THRESHOLD}
-	 *   of the plan (catches small vaults the absolute threshold would miss).
+	 * Rationale: a destination with no `lastSuccessfulSyncAt` either has an empty
+	 * journal (true first sync, or freshly cleared by Phase 0) or a journal that
+	 * could not be confirmed against any prior successful run.  In both cases the
+	 * decision table cannot legitimately emit `delete-local` — that action requires
+	 * a matching baseline, which a never-synced destination does not have.  Any
+	 * `delete-local` on such a destination is therefore a bug and is refused.
 	 *
 	 * @param plan - Planner output to inspect.
 	 * @returns A human-readable error message when the plan should be blocked, or `null` to proceed.
@@ -239,18 +279,16 @@ export class SyncEngine {
 		const deleteCount = plan.reduce((count, item) => item.action === 'delete-local' ? count + 1 : count, 0);
 		if (deleteCount === 0) return null;
 
-		const exceedsAbsolute = deleteCount > DESTRUCTIVE_DELETE_ABSOLUTE_THRESHOLD;
-		const exceedsRatio = plan.length > 0 && (deleteCount / plan.length) >= DESTRUCTIVE_DELETE_RATIO_THRESHOLD;
-		if (!exceedsAbsolute && !exceedsRatio) return null;
-
-		const hasPriorSuccess = (await this.journal.getMetadata(LAST_SUCCESSFUL_SYNC_KEY)) !== undefined;
+		const hasPriorSuccess = (await withJournalContext('reading prior successful sync timestamp',
+			() => this.journal.getMetadata(LAST_SUCCESSFUL_SYNC_KEY),
+		)) !== undefined;
 		if (hasPriorSuccess) return null;
 
 		return (
 			`Aborted: destructive plan blocked — ${deleteCount} of ${plan.length} action(s) would trash local files ` +
 			'against a destination that has no prior successful sync. ' +
 			'Verify the configured bucket and sync prefix point to the expected location, ' +
-			'then clear the sync journal from settings if a fresh re-upload is intended.'
+			'then use "Reset sync journal" in Advanced settings if a fresh re-upload is intended.'
 		);
 	}
 

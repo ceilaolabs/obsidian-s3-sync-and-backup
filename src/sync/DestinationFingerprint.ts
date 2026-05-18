@@ -20,20 +20,33 @@ import { normalizePrefix } from '../utils/paths';
  * Compute a stable, comparable string representation of the destination a sync
  * journal was built against.
  *
- * Two settings objects produce the same fingerprint exactly when they describe
- * the same physical S3 location. The fingerprint is meant for equality
- * comparison only; it is not cryptographically secure and should not be parsed.
+ * The fingerprint is the canonical JSON serialisation of a fixed-shape object
+ * containing only the destination-affecting settings.  JSON quoting escapes
+ * delimiter characters, so user-controlled fields (e.g. `syncPrefix`) cannot
+ * craft a value that collides with a different destination.
+ *
+ * Two settings objects produce the same fingerprint when their destination
+ * fields match after `normalizePrefix` is applied to `syncPrefix`.  Other
+ * forms of equivalence (e.g. case-normalised endpoint hostnames, trailing
+ * slashes in `endpoint`, alternate URL schemes) are intentionally not
+ * resolved — distinct spellings of the same physical location compare
+ * non-equal and are treated as a destination change.
+ *
+ * The fingerprint is meant for equality comparison only; it is not
+ * cryptographically secure and should not be parsed.
  *
  * @param settings - Plugin settings whose destination fields will be hashed.
  * @returns A deterministic string suitable for storage in the journal metadata.
  */
 export function computeDestinationFingerprint(settings: S3SyncBackupSettings): string {
-	const parts = [
-		`provider=${settings.provider}`,
-		`region=${settings.region}`,
-		`endpoint=${settings.endpoint}`,
-		`bucket=${settings.bucket}`,
-		`prefix=${normalizePrefix(settings.syncPrefix)}`,
-	];
-	return parts.join('|');
+	// Keys are fixed in declaration order; JSON.stringify preserves it so the
+	// output is deterministic without an explicit sort.
+	const payload = {
+		provider: settings.provider,
+		region: settings.region,
+		endpoint: settings.endpoint,
+		bucket: settings.bucket,
+		prefix: normalizePrefix(settings.syncPrefix),
+	};
+	return JSON.stringify(payload);
 }
