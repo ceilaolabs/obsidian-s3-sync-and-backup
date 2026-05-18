@@ -436,6 +436,85 @@ describe('SyncEngine', () => {
 	});
 
 	/**
+	 * Covers SyncEngine's plan-time safety guard: when a planner output contains an
+	 * unusually high number of `delete-local` actions and the destination has no prior
+	 * successful sync recorded, the engine must refuse to execute and surface a clear
+	 * error.  This is the belt-and-braces backstop against future bugs that would
+	 * otherwise produce a destructive plan slipping past the destination-fingerprint
+	 * invalidation.
+	 */
+	describe('destructive plan guard', () => {
+		function createDeletePlan(count: number): SyncPlanItem[] {
+			return Array.from({ length: count }, (_, i) => ({
+				path: `notes/file-${i}.md`,
+				action: 'delete-local' as const,
+				reason: 'baseline says remotely deleted',
+			}));
+		}
+
+		it('blocks execution when a new destination produces many delete-local actions', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce(createDeletePlan(50));
+
+			const result = await context.engine.sync();
+
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0]?.message).toMatch(/destructive plan/i);
+			expect(result.errors[0]?.recoverable).toBe(false);
+		});
+
+		it('allows mass delete-local actions when the destination has a prior successful sync', async () => {
+			const context = createEngineContext();
+			// Stored fingerprint matches current so the planner is invoked; a prior
+			// lastSuccessfulSyncAt signals this destination has been seen before, so
+			// large deletions are legitimate cleanup (e.g. another device wiped files).
+			context.journal.getMetadata.mockImplementation(async (key: string) => {
+				if (key === 'destinationFingerprint') {
+					return 'provider=aws|region=us-east-1|endpoint=|bucket=|prefix=vault';
+				}
+				if (key === 'lastSuccessfulSyncAt') {
+					return 1_700_000_000_000;
+				}
+				return undefined;
+			});
+			context.planner.buildPlan.mockResolvedValueOnce(createDeletePlan(50));
+
+			await context.engine.sync();
+
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not block when delete-local count is below the absolute threshold and the ratio is small', async () => {
+			const context = createEngineContext();
+			// 3 deletions inside a 100-action plan — both well under the absolute and
+			// ratio thresholds, so the guard should let the plan proceed.
+			const plan: SyncPlanItem[] = [
+				...createDeletePlan(3),
+				...Array.from({ length: 97 }, (_, i) => createPlanItem(`notes/upload-${i}.md`, 'upload')),
+			];
+			context.planner.buildPlan.mockResolvedValueOnce(plan);
+
+			await context.engine.sync();
+
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
+		});
+
+		it('blocks when the plan is dominated by delete-local even on small vaults', async () => {
+			const context = createEngineContext();
+			// 5 deletes in a 5-item plan — below the absolute threshold but 100% of the plan.
+			context.planner.buildPlan.mockResolvedValueOnce(createDeletePlan(5));
+
+			const result = await context.engine.sync();
+
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.message).toMatch(/destructive plan/i);
+		});
+	});
+
+	/**
 	 * Covers SyncEngine's runtime configuration updates, verifying the path codec,
 	 * planner settings, and executor debug flag all reflect the latest settings snapshot.
 	 */

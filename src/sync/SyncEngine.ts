@@ -14,7 +14,7 @@
  */
 
 import { App } from 'obsidian';
-import { S3SyncBackupSettings, SyncResult } from '../types';
+import { S3SyncBackupSettings, SyncPlanItem, SyncResult } from '../types';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
@@ -34,6 +34,24 @@ import { computeDestinationFingerprint } from './DestinationFingerprint';
  * destructive plan.
  */
 const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
+
+/**
+ * Absolute upper bound on `delete-local` actions that may execute against a
+ * destination with no prior successful sync.  Tuned to be safely above any
+ * legitimate first-sync scenario (which produces no deletions at all) while
+ * still catching mass-delete bugs on small-to-medium vaults.
+ */
+const DESTRUCTIVE_DELETE_ABSOLUTE_THRESHOLD = 10;
+
+/**
+ * Ratio threshold for `delete-local` actions relative to the full plan size.
+ * Catches small vaults where the absolute count alone would not trigger
+ * (e.g. 5 deletions in a 5-item plan = 100 %).
+ */
+const DESTRUCTIVE_DELETE_RATIO_THRESHOLD = 0.5;
+
+/** Journal metadata key holding the epoch-ms time of the last successful sync. */
+const LAST_SUCCESSFUL_SYNC_KEY = 'lastSuccessfulSyncAt';
 
 /**
  * SyncEngine — orchestrates a complete sync cycle.
@@ -126,6 +144,15 @@ export class SyncEngine {
 			const plan = await planner.buildPlan();
 			this.log(`Plan contains ${plan.length} action(s)`);
 
+			// Phase 1.5 — Safety guard.  Refuse any plan that wants to mass-delete local
+			// files when this destination has never completed a successful sync.  This is a
+			// belt-and-braces backstop against future bugs that would otherwise drive a
+			// destructive plan past the destination-fingerprint check.
+			const guardError = await this.checkDestructivePlan(plan);
+			if (guardError) {
+				return this.buildBlockedResult(guardError);
+			}
+
 			// Phase 2 — Execute
 			const executor = new SyncExecutor(
 				this.app,
@@ -141,7 +168,7 @@ export class SyncEngine {
 
 			// Phase 3 — Persist metadata
 			if (result.success) {
-				await this.journal.setMetadata('lastSuccessfulSyncAt', Date.now());
+				await this.journal.setMetadata(LAST_SUCCESSFUL_SYNC_KEY, Date.now());
 			}
 
 			this.log(`Sync completed with ${result.errors.length} error(s)`);
@@ -194,6 +221,64 @@ export class SyncEngine {
 		}
 
 		await this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, current);
+	}
+
+	/**
+	 * Inspect a freshly built plan and return an error message when it would mass-delete
+	 * local files against a destination that has no prior successful sync recorded.
+	 *
+	 * Triggers on either condition:
+	 * - Absolute count: more than {@link DESTRUCTIVE_DELETE_ABSOLUTE_THRESHOLD} `delete-local` actions.
+	 * - Ratio: `delete-local` actions make up at least {@link DESTRUCTIVE_DELETE_RATIO_THRESHOLD}
+	 *   of the plan (catches small vaults the absolute threshold would miss).
+	 *
+	 * @param plan - Planner output to inspect.
+	 * @returns A human-readable error message when the plan should be blocked, or `null` to proceed.
+	 */
+	private async checkDestructivePlan(plan: SyncPlanItem[]): Promise<string | null> {
+		const deleteCount = plan.reduce((count, item) => item.action === 'delete-local' ? count + 1 : count, 0);
+		if (deleteCount === 0) return null;
+
+		const exceedsAbsolute = deleteCount > DESTRUCTIVE_DELETE_ABSOLUTE_THRESHOLD;
+		const exceedsRatio = plan.length > 0 && (deleteCount / plan.length) >= DESTRUCTIVE_DELETE_RATIO_THRESHOLD;
+		if (!exceedsAbsolute && !exceedsRatio) return null;
+
+		const hasPriorSuccess = (await this.journal.getMetadata(LAST_SUCCESSFUL_SYNC_KEY)) !== undefined;
+		if (hasPriorSuccess) return null;
+
+		return (
+			`Aborted: destructive plan blocked — ${deleteCount} of ${plan.length} action(s) would trash local files ` +
+			'against a destination that has no prior successful sync. ' +
+			'Verify the configured bucket and sync prefix point to the expected location, ' +
+			'then clear the sync journal from settings if a fresh re-upload is intended.'
+		);
+	}
+
+	/**
+	 * Construct a `SyncResult` representing a plan that was refused by the safety guard.
+	 *
+	 * The error is marked non-recoverable because retrying the same sync would re-trigger
+	 * the same guard; the user must take an explicit action (fix settings or reset the
+	 * journal) before another attempt makes sense.
+	 *
+	 * @param message - Human-readable explanation of why the plan was blocked.
+	 * @returns A populated `SyncResult` with `success: false` and a single error.
+	 */
+	private buildBlockedResult(message: string): SyncResult {
+		const now = Date.now();
+		console.error(`[S3 Sync] ${message}`);
+		return {
+			success: false,
+			startedAt: now,
+			completedAt: now,
+			filesUploaded: 0,
+			filesDownloaded: 0,
+			filesDeleted: 0,
+			filesAdopted: 0,
+			filesForgotten: 0,
+			conflicts: [],
+			errors: [{ path: '', action: 'delete-local', message, recoverable: false }],
+		};
 	}
 
 	/**
