@@ -321,7 +321,7 @@ describe('SyncPlanner', () => {
 		it('filters skip items when local and remote both match the baseline', async () => {
 			addVaultFile('stable.md', '1234567890', 500, 10);
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/stable.md', size: 10, etag: '"etag-stable"' }),
+				createRemoteObject({ key: 'vault/stable.md', size: 10, etag: 'etag-stable' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({
@@ -371,17 +371,19 @@ describe('SyncPlanner', () => {
 			]);
 		});
 
-		it('strips quotes from remote ETags before attaching them to plan items', async () => {
+		it('propagates the remote ETag to plan items as expectedRemoteEtag', async () => {
+			// S3Provider normalizes ETags (strips W/ weak prefix and double-quotes)
+			// before they reach SyncPlanner, so the planner forwards them as-is.
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/quoted.md', etag: '"abc"' }),
+				createRemoteObject({ key: 'vault/normalized.md', etag: 'abc' }),
 			]);
-			mockedDecide.mockReturnValue(createPlanItem('quoted.md', 'download'));
+			mockedDecide.mockReturnValue(createPlanItem('normalized.md', 'download'));
 
 			const plan = await planner.buildPlan();
 
 			expect(plan).toEqual([
 				expect.objectContaining({
-					path: 'quoted.md',
+					path: 'normalized.md',
 					expectedRemoteEtag: 'abc',
 				}),
 			]);
@@ -457,7 +459,7 @@ describe('SyncPlanner', () => {
 			addVaultFile('dir/LOCAL_note.md');
 			addVaultFile('dir/REMOTE_note.md');
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/dir/note.md', etag: '"remote-etag"' }),
+				createRemoteObject({ key: 'vault/dir/note.md', etag: 'remote-etag' }),
 				createRemoteObject({ key: 'vault/.obsidian-s3-sync/engine.json' }),
 			]);
 			pathCodec.isMetadataKey.mockImplementation((key) => key.includes('.obsidian-s3-sync/engine.json'));

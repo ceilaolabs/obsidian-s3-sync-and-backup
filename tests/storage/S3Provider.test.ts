@@ -2,7 +2,7 @@
  * Unit tests for S3Provider request shaping.
  */
 
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { S3Provider } from '../../src/storage/S3Provider';
 import { S3SyncBackupSettings } from '../../src/types';
 
@@ -115,6 +115,88 @@ describe('S3Provider', () => {
 			const result = await provider.downloadFileAsTextWithEtag('vault/test.md');
 
 			expect(result).toEqual({ text: 'plain text', etag: 'etag-str' });
+		});
+	});
+
+	/**
+	 * Regression coverage for the ETag normalization contract. S3-compatible
+	 * storage (notably Cloudflare R2) can return weak entity-tags of the form
+	 * `W/"abc"`. Every S3Provider method that surfaces an ETag to callers must
+	 * strip both the `W/` weak-tag prefix and surrounding double-quotes so the
+	 * sync engine can compare ETags against its own bare-form baselines.
+	 */
+	describe('ETag normalization', () => {
+		it('strips W/ weak prefix from getFileEtag response', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({ ETag: 'W/"weak-etag"' });
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const etag = await provider.getFileEtag('vault/test.md');
+
+			expect(etag).toBe('weak-etag');
+		});
+
+		it('strips W/ weak prefix from downloadFileAsTextWithEtag response', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({
+				Body: new TextEncoder().encode('payload'),
+				ETag: 'W/"weak-etag"',
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const result = await provider.downloadFileAsTextWithEtag('vault/test.md');
+
+			expect(result).toEqual({ text: 'payload', etag: 'weak-etag' });
+		});
+
+		it('strips W/ weak prefix from listObjects entries', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({
+				Contents: [
+					{ Key: 'vault/a.md', Size: 1, LastModified: new Date(0), ETag: 'W/"weak-a"' },
+					{ Key: 'vault/b.md', Size: 2, LastModified: new Date(0), ETag: '"strong-b"' },
+				],
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const objects = await provider.listObjects('vault/');
+
+			expect(send.mock.calls[0][0]).toBeInstanceOf(ListObjectsV2Command);
+			expect(objects.map((o) => o.etag)).toEqual(['weak-a', 'strong-b']);
+		});
+
+		it('strips W/ weak prefix from uploadFile response', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({ ETag: 'W/"weak-uploaded"' });
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const etag = await provider.uploadFile('vault/test.md', 'hello');
+
+			expect(etag).toBe('weak-uploaded');
+		});
+
+		it('strips W/ weak prefix from getFileMetadata response', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({
+				ETag: 'W/"weak-meta"',
+				ContentLength: 42,
+				LastModified: new Date(0),
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const info = await provider.getFileMetadata('vault/test.md');
+
+			expect(info?.etag).toBe('weak-meta');
+		});
+
+		it('returns null from getFileEtag when the response ETag is missing', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({ ETag: undefined });
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const etag = await provider.getFileEtag('vault/test.md');
+
+			expect(etag).toBeNull();
 		});
 	});
 });

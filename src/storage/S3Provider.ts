@@ -222,7 +222,7 @@ export class S3Provider {
                             key: item.Key,
                             size: item.Size || 0,
                             lastModified: item.LastModified || new Date(),
-                            etag: item.ETag,
+                            etag: this.normalizeETag(item.ETag),
                         });
                     }
                 }
@@ -414,7 +414,7 @@ export class S3Provider {
      * Map a raw AWS SDK `HeadObject` or `GetObject` response into the
      * plugin-specific {@link S3HeadResult} shape.
      *
-     * ETag quotes are stripped here (S3 always wraps the value in `"…"`).
+     * ETag is normalized here (quotes and optional `W/` weak prefix are stripped).
      * Custom metadata keys (`obsidian-sync-version`, `obsidian-fingerprint`,
      * `obsidian-mtime`, `obsidian-device-id`) are extracted from the
      * `Metadata` map and parsed where numeric.
@@ -432,7 +432,7 @@ export class S3Provider {
         const metadata = response.Metadata ?? {};
 
         return {
-            etag: response.ETag?.replace(/"/g, '') || '',
+            etag: this.normalizeETag(response.ETag),
             size: response.ContentLength || 0,
             lastModified: response.LastModified?.getTime() || 0,
             syncVersion: this.parseMetadataNumber(metadata['obsidian-sync-version']),
@@ -478,7 +478,7 @@ export class S3Provider {
      * Avoids the TOCTOU race of separate HeadObject + GetObject calls.
      *
      * @param key - Full S3 key.
-     * @returns Object with text content and cleaned ETag (quotes stripped), or
+     * @returns Object with text content and cleaned ETag (quotes/weak-prefix stripped), or
      *   `null` if the key does not exist.
      * @throws {Error} On S3/network errors other than 404.
      */
@@ -498,7 +498,7 @@ export class S3Provider {
 
             return {
                 text: new TextDecoder().decode(bytes),
-                etag: response.ETag?.replace(/"/g, '') ?? null,
+                etag: this.normalizeETag(response.ETag) || null,
             };
         } catch (error) {
             const err = error as Error & { name?: string };
@@ -541,7 +541,7 @@ export class S3Provider {
      * @param content - File bytes or UTF-8 string to upload.
      * @param options - Optional content type string, or an options object with
      *   `contentType`, `ifMatch`, `ifNoneMatch`, and/or `metadata` fields.
-     * @returns The ETag of the newly created/updated object (quotes stripped).
+     * @returns The ETag of the newly created/updated object (quotes/weak-prefix stripped).
      * @throws {Error} On S3/network error, or if a conditional header is not
      *   satisfied (HTTP 412 Precondition Failed).
      */
@@ -571,8 +571,8 @@ export class S3Provider {
             Metadata: metadata,
         }));
 
-		// Return cleaned ETag (remove quotes)
-		return response.ETag?.replace(/"/g, '') || '';
+		// Return cleaned ETag (remove quotes and weak prefix)
+		return this.normalizeETag(response.ETag);
 	}
 
 	/**
@@ -581,8 +581,8 @@ export class S3Provider {
 	 *
 	 * The S3 API mandates that entity-tag values in these headers are enclosed
 	 * in double-quotes or use the `W/"..."` weak-tag form.  Because this class
-	 * strips quotes from all returned ETags, they must be re-quoted here before
-	 * being forwarded to the AWS SDK.
+	 * strips quotes and weak prefixes from all returned ETags, they must be
+	 * re-quoted here before being forwarded to the AWS SDK.
 	 *
 	 * Passthrough cases (no wrapping applied):
 	 * - `undefined` / empty — returns `undefined` so the header is omitted.
@@ -603,6 +603,23 @@ export class S3Provider {
 
 		return `"${etag}"`;
 	}
+
+    /**
+     * Normalize an S3 ETag by stripping surrounding double-quotes and the
+     * optional `W/` weak-tag prefix.
+     *
+     * Callers always work with bare hex strings for consistency across
+     * providers (some like Cloudflare R2 return weak ETags more often than AWS).
+     *
+     * @param etag - Raw ETag from S3 response.
+     * @returns Normalized bare hex string, or empty string if input is falsy.
+     */
+    private normalizeETag(etag?: string): string {
+        if (!etag) {
+            return '';
+        }
+        return etag.replace(/^W\//, '').replace(/"/g, '');
+    }
 
     /**
      * Delete a single object from S3.
@@ -694,8 +711,8 @@ export class S3Provider {
      * Fetch only the ETag of an S3 object, suitable for pre-flight checks
      * before conditional writes or deletes.
      *
-     * The returned ETag has its surrounding double-quotes stripped (e.g.
-     * `"abc123"` → `"abc123"`).
+     * The returned ETag has its surrounding double-quotes and optional `W/`
+     * weak-tag prefix stripped (e.g. `W/"abc123"` → `"abc123"`).
      *
      * @param key - Full S3 key.
      * @returns Bare ETag hex string, or `null` if the key does not exist.
@@ -708,8 +725,8 @@ export class S3Provider {
                 Bucket: this.settings.bucket,
                 Key: key,
             }));
-            // Return cleaned ETag (remove quotes)
-            return response.ETag?.replace(/"/g, '') || null;
+            // Return cleaned ETag (remove quotes and weak prefix)
+            return this.normalizeETag(response.ETag) || null;
         } catch (error) {
             const err = error as Error & { name?: string };
             if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
@@ -728,7 +745,7 @@ export class S3Provider {
      * and size checks.
      *
      * @param key - Full S3 key.
-     * @returns Object info with ETag (quotes stripped), or `null` if not found.
+     * @returns Object info with ETag (quotes and weak prefix stripped), or `null` if not found.
      * @throws {Error} On S3/network errors other than 404.
      */
     async getFileMetadata(key: string): Promise<S3ObjectInfo | null> {
@@ -742,7 +759,7 @@ export class S3Provider {
                 key,
                 size: response.ContentLength || 0,
                 lastModified: response.LastModified || new Date(),
-                etag: response.ETag?.replace(/"/g, ''),
+                etag: this.normalizeETag(response.ETag),
             };
         } catch (error) {
             const err = error as Error & { name?: string };
