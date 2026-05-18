@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.0.6](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.5...4.0.6) (2026-05-18)
+
+
+### Bug Fixes
+
+* issue with eTag with unexpected W/ prefix ([88ef94f](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/88ef94fd5ea2545a1d212f5b6453445342b4bc15))
+* issue with eTag with unexpected W/ prefix ([499c0fa](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/499c0fa35a999431e8d000c5cbde49f33987b4b8))
+
+
+### Tests
+
+* **storage:** cover ETag W/ weak-prefix normalization ([2e44786](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/2e447867012996fd9242fe9e1dd970350338a858))
+* **sync:** align SyncPlanner tests with normalized ETag contract ([15469db](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/15469db5c8ab34eedd40804fd2e56e6f5d8e05f7))
+
 ## [4.0.5](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.4...4.0.5) (2026-05-13)
 
 
