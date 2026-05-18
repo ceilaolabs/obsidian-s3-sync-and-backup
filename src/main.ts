@@ -162,6 +162,15 @@ export default class S3SyncBackupPlugin extends Plugin {
 					conflictCount: result.conflicts.length,
 					lastError: result.errors[0]?.message ?? null,
 				});
+
+				// Non-recoverable safety refusals (e.g. destructive plan blocked) must
+				// surface as a Notice regardless of trigger source.  Without this,
+				// scheduled/startup syncs would bury the actionable message in the
+				// status-bar tooltip.
+				const nonRecoverable = result.errors.find((error) => !error.recoverable);
+				if (nonRecoverable) {
+					new Notice(`Sync blocked: ${nonRecoverable.message}`, 15000);
+				}
 			},
 			onSyncError: (error) => {
 				this.statusBar?.updateSyncState({
@@ -596,6 +605,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		const result = await this.syncScheduler?.triggerSync('manual');
 
 		if (!result) {
+			// triggerSync returns null on unhandled engine throws or when a sync was
+			// silently skipped (e.g. encryption coordinator just blocked).  Either way
+			// the user clicked "sync now" and deserves a follow-up message rather than
+			// a status bar left on "syncing".
+			new Notice('Sync did not run — check logs or status bar for details.');
 			return;
 		}
 
