@@ -572,6 +572,22 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		});
 	}
 
+	/**
+	 * Show the confirmation modal for resetting the sync journal.
+	 *
+	 * The journal stores per-file baselines used by three-way reconciliation.
+	 * Clearing it is non-destructive on its own — the very next sync simply
+	 * re-uploads every file from the vault as if for the first time.
+	 *
+	 * @returns A Promise that resolves with `true` when the user confirms.
+	 */
+	private showJournalResetConfirmation(): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new ResetSyncJournalModal(this.app, resolve);
+			modal.open();
+		});
+	}
+
 	private openBackupListModal(): void {
 		const retentionManager = this.plugin.getRetentionManager();
 		const backupDownloader = this.plugin.getBackupDownloader();
@@ -851,6 +867,31 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				});
 			});
 
+		// Reset sync journal
+		new Setting(containerEl)
+			.setName('Reset sync journal')
+			.setDesc(
+				'Discard per-file sync baselines for this vault.  Use when sync has been blocked ' +
+				'because the configured destination is unfamiliar, or to force a fresh full upload.',
+			)
+			.addButton((button) => {
+				button.setButtonText('Reset journal');
+				button.setWarning();
+				button.onClick(async () => {
+					const confirmed = await this.showJournalResetConfirmation();
+					if (!confirmed) return;
+
+					const journal = this.plugin.getSyncJournal();
+					if (!journal) {
+						new Notice('Sync system not initialised yet — try again in a moment.');
+						return;
+					}
+
+					await journal.clear();
+					new Notice('Sync journal reset — the next sync will re-upload every file.');
+				});
+			});
+
 		// Reset to defaults
 		new Setting(containerEl)
 			.setName('Reset to defaults')
@@ -924,6 +965,59 @@ class DisableEncryptionModal extends Modal {
 
 		const confirmBtn = buttonContainer.createEl('button', {
 			text: 'Disable encryption',
+			cls: 'mod-warning',
+		});
+		confirmBtn.addEventListener('click', () => {
+			this.resolve(true);
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		this.resolve(false);
+	}
+}
+
+/**
+ * Confirmation modal shown when the user requests to reset the sync journal.
+ *
+ * Clearing the journal removes every per-file baseline (mtime, size, fingerprint,
+ * etag) so the next sync treats every vault file as new and re-uploads it.  No
+ * S3 objects or local files are deleted by this action.  Resolves the Promise
+ * with `true` on confirm, `false` on cancel or close.
+ */
+class ResetSyncJournalModal extends Modal {
+	private resolve: (value: boolean) => void;
+
+	constructor(app: App, resolve: (value: boolean) => void) {
+		super(app);
+		this.resolve = resolve;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+
+		contentEl.createEl('h2', { text: 'Reset sync journal?' });
+
+		contentEl.createEl('p', {
+			text:
+				'This clears per-file sync baselines stored locally for this vault.  ' +
+				'The next sync will treat every file as new and re-upload it to S3.  ' +
+				'No vault files or S3 objects are deleted by this action.',
+		});
+
+		const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
+
+		buttonContainer
+			.createEl('button', { text: 'Cancel' })
+			.addEventListener('click', () => {
+				this.resolve(false);
+				this.close();
+			});
+
+		const confirmBtn = buttonContainer.createEl('button', {
+			text: 'Reset journal',
 			cls: 'mod-warning',
 		});
 		confirmBtn.addEventListener('click', () => {
