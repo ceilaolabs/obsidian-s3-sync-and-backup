@@ -22,6 +22,18 @@ import { SyncPayloadCodec } from './SyncPayloadCodec';
 import { SyncPlanner } from './SyncPlanner';
 import { SyncExecutor } from './SyncExecutor';
 import { ChangeTracker } from './ChangeTracker';
+import { computeDestinationFingerprint } from './DestinationFingerprint';
+
+/**
+ * Journal metadata key under which the destination fingerprint is persisted.
+ *
+ * The fingerprint identifies the S3 destination (bucket / endpoint / region /
+ * prefix / provider) the journal's baselines were built against. A mismatch
+ * between the stored value and the current settings means the baselines refer
+ * to a different remote and must be discarded before they can drive a
+ * destructive plan.
+ */
+const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
 
 /**
  * SyncEngine — orchestrates a complete sync cycle.
@@ -95,6 +107,13 @@ export class SyncEngine {
 		try {
 			this.log('Starting sync');
 
+			// Phase 0 — Destination guard.  The journal is keyed by vault name only, so a
+			// vault pointed at a new bucket/prefix would otherwise reuse baselines from the
+			// previous destination and trigger a destructive plan (untouched local files
+			// classified as "remotely deleted").  Detect the mismatch and clear stale
+			// baselines before the planner runs.
+			await this.reconcileDestinationFingerprint();
+
 			// Phase 1 — Plan
 			const planner = new SyncPlanner(
 				this.app,
@@ -151,6 +170,30 @@ export class SyncEngine {
 			this.isSyncing = false;
 			this.changeTracker.setSyncInProgress(false);
 		}
+	}
+
+	/**
+	 * Compare the journal's stored destination fingerprint to the one derived from
+	 * current settings.  When they differ, wipe the journal so stale baselines from a
+	 * previous destination cannot drive a destructive plan, then record the new value.
+	 *
+	 * The new fingerprint is also recorded on a true first sync (no stored value) so
+	 * subsequent destination changes are detectable.
+	 */
+	private async reconcileDestinationFingerprint(): Promise<void> {
+		const current = computeDestinationFingerprint(this.settings);
+		const stored = await this.journal.getMetadata(DESTINATION_FINGERPRINT_KEY);
+
+		if (stored === current) {
+			return;
+		}
+
+		if (stored !== undefined) {
+			this.log('Destination changed — clearing stale journal baselines');
+			await this.journal.clear();
+		}
+
+		await this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, current);
 	}
 
 	/**

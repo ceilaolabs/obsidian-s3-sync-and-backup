@@ -48,7 +48,9 @@ interface MockExecutor {
 }
 
 interface MockJournal {
-	setMetadata: jest.Mock<Promise<void>, [string, number]>;
+	setMetadata: jest.Mock<Promise<void>, [string, number | string]>;
+	getMetadata: jest.Mock<Promise<string | number | undefined>, [string]>;
+	clear: jest.Mock<Promise<void>, []>;
 }
 
 interface MockChangeTracker {
@@ -136,6 +138,8 @@ function createEngineContext(overrides: Partial<S3SyncBackupSettings> = {}): Eng
 	const s3Provider: MockS3Provider = { kind: 's3-provider' };
 	const journal: MockJournal = {
 		setMetadata: jest.fn().mockResolvedValue(undefined),
+		getMetadata: jest.fn().mockResolvedValue(undefined),
+		clear: jest.fn().mockResolvedValue(undefined),
 	};
 	const pathCodec: MockPathCodec = {
 		updatePrefix: jest.fn(),
@@ -330,7 +334,9 @@ describe('SyncEngine', () => {
 
 			await context.engine.sync();
 
-			expect(context.journal.setMetadata).not.toHaveBeenCalled();
+			// Note: setMetadata may still be called to record the destination fingerprint;
+			// only the lastSuccessfulSyncAt key must be skipped on failure.
+			expect(context.journal.setMetadata).not.toHaveBeenCalledWith('lastSuccessfulSyncAt', expect.anything());
 		});
 
 		it('wraps an unexpected planner Error into a failed SyncResult', async () => {
@@ -374,6 +380,58 @@ describe('SyncEngine', () => {
 
 			nowSpy.mockRestore();
 			consoleErrorSpy.mockRestore();
+		});
+	});
+
+	/**
+	 * Covers SyncEngine's destination-change detection: when the sync journal was built
+	 * against a different S3 destination (bucket / endpoint / region / prefix / provider),
+	 * baselines from the old destination would mis-classify untouched local files as
+	 * "remotely deleted" and trigger mass `delete-local` actions. The engine must detect
+	 * the mismatch via a stored destination fingerprint and clear the stale baselines
+	 * before planning runs.
+	 */
+	describe('destination fingerprint', () => {
+		it('records the current destination fingerprint on the first sync', async () => {
+			const context = createEngineContext({
+				provider: 'aws',
+				region: 'us-east-1',
+				endpoint: '',
+				bucket: 'my-bucket',
+				syncPrefix: 'vault',
+			});
+
+			await context.engine.sync();
+
+			const expected = 'provider=aws|region=us-east-1|endpoint=|bucket=my-bucket|prefix=vault';
+			expect(context.journal.setMetadata).toHaveBeenCalledWith('destinationFingerprint', expected);
+			expect(context.journal.clear).not.toHaveBeenCalled();
+		});
+
+		it('clears stale baselines and records the new fingerprint when the destination changes', async () => {
+			const context = createEngineContext({ bucket: 'new-bucket', syncPrefix: 'vault' });
+			context.journal.getMetadata.mockResolvedValueOnce('provider=aws|region=us-east-1|endpoint=|bucket=old-bucket|prefix=vault');
+
+			await context.engine.sync();
+
+			expect(context.journal.clear).toHaveBeenCalledTimes(1);
+			const expected = 'provider=aws|region=us-east-1|endpoint=|bucket=new-bucket|prefix=vault';
+			expect(context.journal.setMetadata).toHaveBeenCalledWith('destinationFingerprint', expected);
+			// Clear must happen before the planner runs so stale baselines cannot drive a destructive plan.
+			expect(context.journal.clear.mock.invocationCallOrder[0]).toBeLessThan(
+				context.planner.buildPlan.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+			);
+		});
+
+		it('does not clear or rewrite the fingerprint when the destination is unchanged', async () => {
+			const context = createEngineContext({ bucket: 'same-bucket', syncPrefix: 'vault' });
+			const current = 'provider=aws|region=us-east-1|endpoint=|bucket=same-bucket|prefix=vault';
+			context.journal.getMetadata.mockResolvedValueOnce(current);
+
+			await context.engine.sync();
+
+			expect(context.journal.clear).not.toHaveBeenCalled();
+			expect(context.journal.setMetadata).not.toHaveBeenCalledWith('destinationFingerprint', expect.anything());
 		});
 	});
 
