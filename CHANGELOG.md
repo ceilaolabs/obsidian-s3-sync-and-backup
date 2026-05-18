@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.1.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.6...4.1.0) (2026-05-18)
+
+
+### Features
+
+* **settings:** add Reset sync journal action ([108a7f9](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/108a7f92e53964a72fab44585f782343bfdecb6b))
+
+
+### Bug Fixes
+
+* **sync:** block plans that mass-delete local files on unseen destinations ([a98d953](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/a98d9531b0517bd960cd36da01b0f9fee042c983))
+* **sync:** clear stale journal baselines when S3 destination changes ([79644ff](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/79644ff01639c12b47574a9dea7eb4821efa57ad))
+* **sync:** harden destination guard against collisions and mid-sync races ([dac600a](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/dac600a691774c89282e5a7461ce7fa9dc86fb5b))
+* **sync:** prevent stale-journal mass-delete on destination change (CLO-3) ([8776717](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/87767173460c6d5fdb99a292b5f38b9340f2685e))
+* **ui:** surface blocked syncs as user-visible notices ([6c87b5b](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/6c87b5b3227facfc8a43fb0a2d59b349eb09ddee))
+
 ## [4.0.6](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.5...4.0.6) (2026-05-18)
 
 
