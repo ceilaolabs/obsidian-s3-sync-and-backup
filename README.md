@@ -82,6 +82,47 @@ When encryption is enabled:
 
 ---
 
+## Permissions and data access
+
+The plugin is a sync and backup tool, so by design it enumerates every file in your vault and then reads / uploads / downloads the files inside your configured sync and backup scope.  This section spells out exactly what each piece of the plugin touches so you can make an informed decision before enabling it.
+
+### What the plugin reads
+
+| API | Why the plugin uses it |
+| :--- | :--- |
+| `vault.getFiles()` | Enumerates every file in the vault during sync planning and during backup snapshots. Without this the plugin cannot know what to sync or back up. |
+| `vault.read()` / `vault.readBinary()` | Reads file content so it can be uploaded to S3. Triggered only for files inside the sync/backup scope (every vault file minus your *Exclude patterns* minus the plugin's own settings directory). |
+| `vault.on('create' / 'modify' / 'delete' / 'rename')` | Tracks which files changed since the last sync so the next cycle only re-checks dirty paths. |
+| Bulk re-read on encryption toggle | When you enable, disable, or rotate the passphrase, the plugin reads every in-scope vault file and re-uploads it in the new payload format. |
+
+### What the plugin writes
+
+| Destination | What ends up there |
+| :--- | :--- |
+| **S3** (under your configured **sync prefix**, default `vault`) | A copy of every vault file inside the sync scope. File payloads are end-to-end encrypted when *Enable encryption* is on; plain otherwise. |
+| **S3** (under your configured **backup prefix**, default `backups`) | Timestamped full-vault snapshots. **File payloads** are encrypted when encryption is enabled; the per-snapshot `.backup-manifest.json` is **always plaintext** so the plugin can list and inspect backups without the passphrase (it contains file paths, sizes, SHA-256 checksums, the encryption flag, and the originating device ID). |
+| **Local vault** (`vault.create` / `vault.modify` / `vault.createBinary` / `vault.modifyBinary` / `vault.rename` / `vault.createFolder`) | Files downloaded from S3 on the receiving end of a sync, plus `LOCAL_*` / `REMOTE_*` conflict artifacts when a file diverged on two devices.  Parent folders are auto-created top-down as needed; the rename API is used to stage `LOCAL_*` conflict copies. |
+| **Local vault trash** (via `fileManager.trashFile`) | Files that were deleted on another device and propagated by sync. Honours **Obsidian's** *Files and Links → Deleted files* preference (system trash vs. `.trash/` folder vs. permanent). |
+| **IndexedDB** (database `obsidian-s3-sync-journal-{vaultName}`) | Per-file sync baselines (path, hash, size, mtime, ETag) used for three-way reconciliation, plus a destination fingerprint that detects when you reconnect to a different bucket/prefix. Vault-scoped so two vaults on the same device never share state. |
+| **Obsidian vault-scoped storage** (key `s3-sync-device-id`) | A randomly generated per-vault device identifier. The same ID is written into every uploaded S3 object's `obsidian-device-id` custom metadata for last-writer attribution, and into the `deviceId` field of every backup manifest. |
+| **`data.json`** (Obsidian plugin settings) | All plugin settings (S3 credentials, optional saved passphrase, sync/backup toggles, exclude patterns) plus the last-completed backup timestamp used by the scheduler. The plugin's own settings directory is hardcoded-excluded from sync so this file never leaves your device. |
+
+### What is sent off your device
+
+- **HTTP traffic** goes **only** to the S3 endpoint you configure (AWS S3, Cloudflare R2, RustFS, or any other S3-compatible endpoint). The transport scheme matches the endpoint you set — HTTPS for hosted providers; the plugin accepts plain HTTP if you choose it (e.g. `http://localhost:9000` for a local RustFS).
+- **No telemetry, no analytics, no error reporting, no update polling.** The Security section below covers the network-use detail.
+- **No remote code execution.** The plugin never downloads or evaluates code from the network — all cryptography runs locally in the browser.
+
+### What is *not* read or written
+
+- The plugin does not access the operating system shell, filesystem, or any APIs beyond those Obsidian exposes.
+- It does not touch files outside the configured vault.
+- It does not contact any host other than the S3 endpoint you configure.
+
+> **Important — Obsidian config files are in scope by default.** Only the plugin's own settings directory (`.obsidian/plugins/simple-storage-sync-and-backup/`) is hard-excluded.  Other files under `.obsidian/` (workspace layout, hotkeys, third-party plugin settings, etc.) are vault files from Obsidian's point of view and are enumerated and synced unless you add them to *Exclude patterns* in settings.  If you do not want those propagated across devices, add patterns such as `.obsidian/workspace*`, `.obsidian/hotkeys.json`, `.obsidian/plugins/**`, etc.  The defaults (`**/workspace*`, `.trash/**`) cover the workspace layout but not other config files.
+
+---
+
 ## Settings Reference
 
 ### Connection

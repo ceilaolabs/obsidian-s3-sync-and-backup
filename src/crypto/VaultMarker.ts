@@ -214,13 +214,6 @@ export class VaultMarker {
 const DEVICE_ID_STORAGE_KEY = 's3-sync-device-id';
 
 /**
- * Legacy global localStorage key used by versions prior to the
- * vault-scoped migration.  Checked once during migration so existing
- * users keep the same device ID in their first vault after the upgrade.
- */
-const LEGACY_GLOBAL_STORAGE_KEY = 'obsidian-s3-sync-device-id';
-
-/**
  * Generate a unique device ID using cryptographically random bytes.
  *
  * Format: `device-<16 hex chars>` (8 random bytes).
@@ -242,38 +235,22 @@ export function generateDeviceId(): string {
  * Uses Obsidian's vault-scoped storage ({@link App.loadLocalStorage} /
  * {@link App.saveLocalStorage}) so each vault on the same machine gets
  * its own device ID.  This prevents cross-vault contamination when a
- * single user runs multiple vaults.
- *
- * **Migration**: On first call after upgrade, if vault-scoped storage is
- * empty the function checks the legacy global `window.localStorage` key
- * (`obsidian-s3-sync-device-id`) and adopts that value for this vault.
- * The global key is intentionally left intact so other vaults (not yet
- * upgraded) can also migrate independently.
+ * single user runs multiple vaults.  When no prior value exists for the
+ * current vault a fresh ID is generated and persisted.
  *
  * @param app - The Obsidian {@link App} instance (provides vault-scoped storage)
  * @returns The device ID for this vault
  */
 export function getOrCreateDeviceId(app: App): string {
-    // 1. Try vault-scoped storage first
-    const existing = app.loadLocalStorage(DEVICE_ID_STORAGE_KEY) as string | null;
-    if (existing) {
+    // `loadLocalStorage` returns `any | null`, so capture the result as
+    // `unknown` and narrow it: a truthy non-string (legacy object, accidental
+    // number) must not be adopted as a device ID — generate a fresh one instead.
+    const existing: unknown = app.loadLocalStorage(DEVICE_ID_STORAGE_KEY);
+    if (typeof existing === 'string' && existing.length > 0) {
         return existing;
     }
 
-    // 2. Migrate from legacy global localStorage if available
-    let deviceId: string | null = null;
-    try {
-        deviceId = window.localStorage.getItem(LEGACY_GLOBAL_STORAGE_KEY);
-    } catch {
-        // window.localStorage may not be available in all environments
-    }
-
-    // 3. Generate a fresh ID if no legacy value exists
-    if (!deviceId) {
-        deviceId = generateDeviceId();
-    }
-
-    // 4. Persist into vault-scoped storage
+    const deviceId = generateDeviceId();
     app.saveLocalStorage(DEVICE_ID_STORAGE_KEY, deviceId);
     return deviceId;
 }
