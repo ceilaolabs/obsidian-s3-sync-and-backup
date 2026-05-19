@@ -242,8 +242,11 @@ export function generateDeviceId(): string {
  * @returns The device ID for this vault
  */
 export function getOrCreateDeviceId(app: App): string {
-    const existing = app.loadLocalStorage(DEVICE_ID_STORAGE_KEY) as string | null;
-    if (existing) {
+    // `loadLocalStorage` returns `any | null`, so capture the result as
+    // `unknown` and narrow it: a truthy non-string (legacy object, accidental
+    // number) must not be adopted as a device ID — generate a fresh one instead.
+    const existing: unknown = app.loadLocalStorage(DEVICE_ID_STORAGE_KEY);
+    if (typeof existing === 'string' && existing.length > 0) {
         return existing;
     }
 

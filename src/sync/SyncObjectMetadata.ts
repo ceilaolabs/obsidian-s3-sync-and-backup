@@ -51,9 +51,11 @@ const KEY_MTIME = 'obsidian-mtime';
 /**
  * S3 metadata key that stores the device identifier of the uploading client.
  *
- * Allows the planner to distinguish between a file uploaded by this device
- * versus another device, enabling optimistic local-wins decisions for files
- * we uploaded ourselves.
+ * Carried alongside every uploaded object purely as audit / attribution
+ * metadata — for example, to identify the last-writer device when inspecting
+ * an object in the S3 console or in a backup manifest.  The planner does not
+ * read this value today; conflict and change detection rely on the content
+ * fingerprint, mtime, size, and ETag only.
  * The AWS SDK automatically adds the `x-amz-meta-` prefix when sending.
  */
 const KEY_DEVICE_ID = 'obsidian-device-id';

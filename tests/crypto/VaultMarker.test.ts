@@ -76,4 +76,27 @@ describe('getOrCreateDeviceId', () => {
 
 		expect(first).toBe(second);
 	});
+
+	it('regenerates a fresh ID when vault-scoped storage holds an empty string', () => {
+		// `loadLocalStorage` returns `any | null`; an empty string is truthy-falsy
+		// edge case that must not be adopted as a valid device ID.
+		vaultStorage.set('s3-sync-device-id', '');
+
+		const id = getOrCreateDeviceId(mockApp);
+
+		expect(id).toMatch(/^device-[0-9a-f]{16}$/);
+		expect(mockApp.saveLocalStorage).toHaveBeenCalledWith('s3-sync-device-id', id);
+	});
+
+	it('regenerates a fresh ID when vault-scoped storage holds a non-string value', () => {
+		// Defensive against future regressions: a non-string stored value (e.g. an
+		// object accidentally written by a future migration) must trigger fresh
+		// generation rather than being returned as if it were a device ID.
+		(mockApp.loadLocalStorage as jest.Mock).mockReturnValueOnce({ id: 'device-legacy0000000000' });
+
+		const id = getOrCreateDeviceId(mockApp);
+
+		expect(id).toMatch(/^device-[0-9a-f]{16}$/);
+		expect(mockApp.saveLocalStorage).toHaveBeenCalledWith('s3-sync-device-id', id);
+	});
 });
