@@ -21,22 +21,22 @@ const context = await esbuild.context({
 	},
 	entryPoints: ["src/main.ts"],
 	bundle: true,
-	// Replace the IE-era `setimmediate` polyfill (pulled in transitively via
-	// jszip) with an in-repo shim that uses `setTimeout(fn, 0)`.  The upstream
-	// polyfill's `document.createElement("script")` fast path and Function-
-	// constructor fallback trigger Obsidian plugin-store scorecard flags and
-	// are dead code in Obsidian's runtime.  See CLO-4 and
-	// `src/shims/setimmediate.ts` for the full rationale.
+	// Two transitive jszip dependencies bundle IE-era polyfills whose
+	// `document.createElement("script")` fast paths and Function-constructor
+	// fallbacks trigger Obsidian plugin-store scorecard flags:
+	//   - `setimmediate@1.0.5` (jszip → setimmediate)
+	//   - `immediate@3.0.6`    (jszip → lie → immediate)
+	// Both are replaced here with a single CommonJS shim that defers to
+	// `setTimeout(fn, 0)` (see `src/shims/setimmediate.cjs` for the full
+	// rationale and the desktop-runtime caveat).
 	alias: {
-		// Force jszip to resolve via its lib/ source rather than the pre-bundled
-		// dist/jszip.min.js (which the jszip `browser` field would otherwise
-		// redirect to).  The pre-bundled dist has its setImmediate polyfill
-		// inlined; using the lib/ source means the polyfill arrives as discrete
-		// `require("setimmediate")` / `require("immediate")` calls that the
-		// next two alias entries can replace.
+		// jszip's `browser` field redirects `lib/index` → a pre-bundled
+		// `dist/jszip.min.js` that has both polyfills inlined.  Pointing the
+		// alias at `lib/` instead keeps the polyfill imports discrete so the
+		// next two entries can intercept them.
 		jszip: path.resolve(__dirname, "node_modules/jszip/lib/index.js"),
-		setimmediate: path.resolve(__dirname, "src/shims/setimmediate.ts"),
-		immediate: path.resolve(__dirname, "src/shims/setimmediate.ts"),
+		setimmediate: path.resolve(__dirname, "src/shims/setimmediate.cjs"),
+		immediate: path.resolve(__dirname, "src/shims/setimmediate.cjs"),
 	},
 	external: [
 		"obsidian",
