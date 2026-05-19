@@ -82,6 +82,44 @@ When encryption is enabled:
 
 ---
 
+## Permissions and data access
+
+The plugin is a sync and backup tool, so by design it reads every file in your vault and writes copies to your configured S3 bucket. This section spells out exactly what each piece of the plugin touches, so you can make an informed decision before enabling it.
+
+### What the plugin reads
+
+| API | Why the plugin uses it |
+| :--- | :--- |
+| `vault.getFiles()` | Enumerates every file in the vault during sync planning and during backup snapshots. Without this the plugin cannot know what to sync or back up. |
+| `vault.read()` / `vault.readBinary()` | Reads file content so it can be uploaded to S3. Triggered only for files included by the sync/backup scope (the configured prefixes, minus your *Exclude patterns*). |
+| `vault.on('create' / 'modify' / 'delete' / 'rename')` | Tracks which files changed since the last sync so the next cycle only re-checks dirty paths. |
+
+### What the plugin writes
+
+| Destination | What ends up there |
+| :--- | :--- |
+| **S3** (under your configured **sync prefix**, default `vault/`) | A copy of every vault file inside the sync scope. End-to-end encrypted when *Enable encryption* is on; plain otherwise. |
+| **S3** (under your configured **backup prefix**, default `backups/`) | Timestamped full-vault snapshots plus a `.backup-manifest.json` per snapshot. Encrypted when encryption is enabled. |
+| **Local vault** (via `vault.create` / `vault.modify` / `vault.createBinary` / `vault.modifyBinary`) | Files downloaded from S3 on the receiving end of a sync, plus `LOCAL_*` / `REMOTE_*` conflict artifacts when a file diverged on two devices. |
+| **Local vault trash** (via `fileManager.trashFile`) | Files that were deleted on another device and propagated by sync. Honours your *Deleted files* preference (system trash vs. `.trash/`). |
+| **IndexedDB** (database `obsidian-s3-sync-journal-{vaultName}`) | Per-file sync baselines (path, hash, size, mtime, ETag) used for three-way reconciliation. Vault-scoped so two vaults on the same device never share state. |
+| **Obsidian vault-scoped storage** (key `s3-sync-device-id`) | A randomly generated per-vault device identifier used as `obsidian-device-id` metadata on uploads for last-writer attribution. |
+| **`data.json`** (Obsidian plugin settings) | All plugin settings. S3 credentials and the optional saved passphrase live here. The plugin's own settings directory is hardcoded-excluded from sync so these never leave your device. |
+
+### What is sent off your device
+
+- **HTTP traffic** goes **only** to the S3 endpoint you configure (AWS S3, Cloudflare R2, RustFS, or any other S3-compatible endpoint) over HTTPS. No third-party services are contacted.
+- **No telemetry, no analytics, no error reporting, no update polling.** The Security section below covers the network-use detail.
+- **No remote code execution.** The plugin never downloads or evaluates code from the network — all cryptography runs locally in the browser.
+
+### What is *not* read or written
+
+- The plugin does not touch files outside the configured vault.
+- It does not read or modify Obsidian's own configuration (`.obsidian/...`) except for the plugin's own `data.json`.
+- It does not access the operating system shell, filesystem, or any APIs beyond those Obsidian exposes.
+
+---
+
 ## Settings Reference
 
 ### Connection
