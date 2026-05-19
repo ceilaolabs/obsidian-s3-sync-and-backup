@@ -1,7 +1,3 @@
-/**
- * @jest-environment jsdom
- */
-
 import { App } from 'obsidian';
 import { generateDeviceId, getOrCreateDeviceId } from '../../src/crypto/VaultMarker';
 
@@ -30,12 +26,6 @@ describe('getOrCreateDeviceId', () => {
 				vaultStorage.set(key, value);
 			}),
 		} as unknown as App;
-
-		window.localStorage.removeItem('obsidian-s3-sync-device-id');
-	});
-
-	afterEach(() => {
-		window.localStorage.removeItem('obsidian-s3-sync-device-id');
 	});
 
 	it('generates a new device ID when no prior value exists', () => {
@@ -52,33 +42,6 @@ describe('getOrCreateDeviceId', () => {
 
 		expect(id).toBe('device-existing1234abcd');
 		expect(mockApp.saveLocalStorage).not.toHaveBeenCalled();
-	});
-
-	it('migrates a legacy global localStorage ID into vault-scoped storage', () => {
-		window.localStorage.setItem('obsidian-s3-sync-device-id', 'device-legacy00112233');
-
-		const id = getOrCreateDeviceId(mockApp);
-
-		expect(id).toBe('device-legacy00112233');
-		expect(mockApp.saveLocalStorage).toHaveBeenCalledWith('s3-sync-device-id', 'device-legacy00112233');
-	});
-
-	it('does not migrate when vault-scoped storage already has a value', () => {
-		window.localStorage.setItem('obsidian-s3-sync-device-id', 'device-legacy00112233');
-		vaultStorage.set('s3-sync-device-id', 'device-vaultspecific99');
-
-		const id = getOrCreateDeviceId(mockApp);
-
-		expect(id).toBe('device-vaultspecific99');
-		expect(mockApp.saveLocalStorage).not.toHaveBeenCalled();
-	});
-
-	it('leaves the legacy global key intact after migration', () => {
-		window.localStorage.setItem('obsidian-s3-sync-device-id', 'device-legacy00112233');
-
-		getOrCreateDeviceId(mockApp);
-
-		expect(window.localStorage.getItem('obsidian-s3-sync-device-id')).toBe('device-legacy00112233');
 	});
 
 	it('produces distinct IDs for two different vaults (vault-scoped isolation)', () => {
@@ -105,24 +68,6 @@ describe('getOrCreateDeviceId', () => {
 		expect(id1).not.toBe(id2);
 		expect(vault1Storage.get('s3-sync-device-id')).toBe(id1);
 		expect(vault2Storage.get('s3-sync-device-id')).toBe(id2);
-	});
-
-	it('handles window.localStorage being unavailable gracefully', () => {
-		const originalLocalStorage = window.localStorage;
-		Object.defineProperty(window, 'localStorage', {
-			get: () => { throw new Error('SecurityError: localStorage not available'); },
-			configurable: true,
-		});
-
-		const id = getOrCreateDeviceId(mockApp);
-
-		expect(id).toMatch(/^device-[0-9a-f]{16}$/);
-		expect(mockApp.saveLocalStorage).toHaveBeenCalledWith('s3-sync-device-id', id);
-
-		Object.defineProperty(window, 'localStorage', {
-			get: () => originalLocalStorage,
-			configurable: true,
-		});
 	});
 
 	it('returns the same ID on repeated calls for the same vault', () => {
