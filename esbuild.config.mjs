@@ -1,6 +1,10 @@
 import esbuild from "esbuild";
 import process from "process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { builtinModules } from 'node:module';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const banner =
 `/*
@@ -17,6 +21,23 @@ const context = await esbuild.context({
 	},
 	entryPoints: ["src/main.ts"],
 	bundle: true,
+	// Two transitive jszip dependencies bundle IE-era polyfills whose
+	// `document.createElement("script")` fast paths and Function-constructor
+	// fallbacks trigger Obsidian plugin-store scorecard flags:
+	//   - `setimmediate@1.0.5` (jszip → setimmediate)
+	//   - `immediate@3.0.6`    (jszip → lie → immediate)
+	// Both are replaced here with a single CommonJS shim that defers to
+	// `setTimeout(fn, 0)` (see `src/shims/setimmediate.cjs` for the full
+	// rationale and the desktop-runtime caveat).
+	alias: {
+		// jszip's `browser` field redirects `lib/index` → a pre-bundled
+		// `dist/jszip.min.js` that has both polyfills inlined.  Pointing the
+		// alias at `lib/` instead keeps the polyfill imports discrete so the
+		// next two entries can intercept them.
+		jszip: path.resolve(__dirname, "node_modules/jszip/lib/index.js"),
+		setimmediate: path.resolve(__dirname, "src/shims/setimmediate.cjs"),
+		immediate: path.resolve(__dirname, "src/shims/setimmediate.cjs"),
+	},
 	external: [
 		"obsidian",
 		"electron",
