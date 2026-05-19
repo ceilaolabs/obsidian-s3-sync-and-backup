@@ -1,5 +1,27 @@
 # Changelog
 
+## [4.1.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.1.0...4.1.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **build:** make setImmediate shim CJS-callable and cover it with tests ([bd7f7d7](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/bd7f7d7e66ac7f60a6d98df64cb740ff0976dc10))
+* **build:** replace setimmediate/immediate polyfill to clear scorecard flags ([ae2cddf](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/ae2cddf7807412076d82c7d5bf53162b471eaf83))
+* **build:** replace setimmediate/immediate polyfill to clear scorecard flags (CLO-4) ([c2260e7](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/c2260e7dd9e1ab44258a789f1a18912a517cb43e))
+* close remaining plugin-store scorecard recommendations (CLO-6) ([2dbb9ef](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/2dbb9efd8776ddec922747544a3fe1b59ae20f00))
+* **crypto:** drop legacy global localStorage device-id migration ([4560134](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/456013401bc5635d680b710f5a27a1fe51461ac3))
+
+
+### Documentation
+
+* **readme:** disclose plugin permissions and data-access surface ([0460759](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/04607594c43fdbfe81ac1c98b73c26ebba8c4e06))
+* **readme:** fix accuracy of Permissions and data access section ([adc7e56](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/adc7e56dc5d221dfe8c62f7fb08422fc1fd24806))
+
+
+### Code Refactoring
+
+* **crypto:** tighten device-id type guard and refresh attribution comment ([d166b53](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/d166b538709c341a15fc50e01b471e0e842958be))
+
 ## [4.1.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.0.6...4.1.0) (2026-05-18)
 
 
