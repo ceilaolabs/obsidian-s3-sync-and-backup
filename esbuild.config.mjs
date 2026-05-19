@@ -1,6 +1,10 @@
 import esbuild from "esbuild";
 import process from "process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { builtinModules } from 'node:module';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const banner =
 `/*
@@ -17,6 +21,23 @@ const context = await esbuild.context({
 	},
 	entryPoints: ["src/main.ts"],
 	bundle: true,
+	// Replace the IE-era `setimmediate` polyfill (pulled in transitively via
+	// jszip) with an in-repo shim that uses `setTimeout(fn, 0)`.  The upstream
+	// polyfill's `document.createElement("script")` fast path and Function-
+	// constructor fallback trigger Obsidian plugin-store scorecard flags and
+	// are dead code in Obsidian's runtime.  See CLO-4 and
+	// `src/shims/setimmediate.ts` for the full rationale.
+	alias: {
+		// Force jszip to resolve via its lib/ source rather than the pre-bundled
+		// dist/jszip.min.js (which the jszip `browser` field would otherwise
+		// redirect to).  The pre-bundled dist has its setImmediate polyfill
+		// inlined; using the lib/ source means the polyfill arrives as discrete
+		// `require("setimmediate")` / `require("immediate")` calls that the
+		// next two alias entries can replace.
+		jszip: path.resolve(__dirname, "node_modules/jszip/lib/index.js"),
+		setimmediate: path.resolve(__dirname, "src/shims/setimmediate.ts"),
+		immediate: path.resolve(__dirname, "src/shims/setimmediate.ts"),
+	},
 	external: [
 		"obsidian",
 		"electron",
