@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.1.1...4.1.2) (2026-05-29)
+
+
+### Bug Fixes
+
+* **manifest:** rename plugin to "S3 Sync + Backup" for directory compliance ([5ae05cf](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/5ae05cf2a949f0cbd7f9045a975ac7e592918bbf))
+* **manifest:** rename plugin to "S3 Sync + Backup" for directory compliance ([15dca15](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/15dca15333664402c176612515d4862f2ad65794))
+
 ## [4.1.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.1.0...4.1.1) (2026-05-19)
 
 
