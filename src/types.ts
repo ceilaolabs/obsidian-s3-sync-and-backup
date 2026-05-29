@@ -1,5 +1,5 @@
 /**
- * Obsidian S3 Sync & Backup - Type Definitions
+ * Obsidian S3 Sync + Backup - Type Definitions
  *
  * This file contains all TypeScript interfaces and types used throughout the plugin.
  * Organized by domain: Settings, Sync, Backup, Crypto, and Storage.
