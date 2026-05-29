@@ -1,4 +1,4 @@
-# Contributing to Obsidian S3 Sync & Backup
+# Contributing to Obsidian S3 Sync + Backup
 
 Welcome! We love contributions. This plugin brings bi-directional vault sync and scheduled backups to Obsidian using S3-compatible storage.
 
@@ -65,7 +65,7 @@ To test your changes in a live Obsidian instance:
 
 The plugin has a built-in debug logging mode that outputs verbose logs to the browser console.
 
-1.  Enable **Debug logging** in **Settings → S3 Sync & Backup → Advanced**.
+1.  Enable **Debug logging** in **Settings → S3 Sync + Backup → Advanced**.
 2.  Open Obsidian DevTools: `Cmd+Option+I` (Mac) or `Ctrl+Shift+I` (Windows/Linux).
 3.  Go to the **Console** tab and filter by `[S3` to isolate plugin logs.
 

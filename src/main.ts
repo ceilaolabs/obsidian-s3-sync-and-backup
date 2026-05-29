@@ -1,5 +1,5 @@
 /**
- * Obsidian S3 Sync & Backup Plugin
+ * Obsidian S3 Sync + Backup Plugin
  *
  * Main plugin entry point. Provides bi-directional vault synchronization
  * and scheduled backups with S3-compatible storage.
@@ -85,7 +85,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Called when the plugin is enabled.
 	 */
 	async onload(): Promise<void> {
-		console.debug('Loading S3 Sync & Backup plugin');
+		console.debug('Loading S3 Sync + Backup plugin');
 
 		await this.loadSettings();
 
@@ -268,7 +268,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Called when the plugin is disabled.
 	 */
 	onunload(): void {
-		console.debug('Unloading S3 Sync & Backup plugin');
+		console.debug('Unloading S3 Sync + Backup plugin');
 
 		this.stopSyncServices();
 

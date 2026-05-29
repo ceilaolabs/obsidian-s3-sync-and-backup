@@ -1,4 +1,4 @@
-# Obsidian S3 Sync & Backup
+# Obsidian S3 Sync + Backup
 
 Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, Cloudflare R2, RustFS, etc.) with optional end-to-end encryption.
 
@@ -27,7 +27,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 
 ### From Community Plugins
 1. Open **Settings** → **Community plugins**
-2. Search for "S3 Sync & Backup"
+2. Search for "S3 Sync + Backup"
 3. Click **Install** then **Enable**
 
 ---
@@ -43,7 +43,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 ## Quick Start
 
 ### 1. Configure S3 Connection
-1. Open **Settings** → **S3 Sync & Backup**.
+1. Open **Settings** → **S3 Sync + Backup**.
 2. Select your provider (**AWS S3**, **Cloudflare R2**, **RustFS**, or **Other S3-compatible**).
 3. Enter your credentials:
    - **Endpoint URL**: Required for non-AWS providers.
@@ -187,13 +187,13 @@ All commands are available via the Obsidian command palette (`Ctrl/Cmd + P`) and
 
 | Command | Description |
 | :--- | :--- |
-| **S3 Sync & Backup: Sync now** | Trigger an immediate sync. |
-| **S3 Sync & Backup: Backup now** | Trigger an immediate backup snapshot. |
-| **S3 Sync & Backup: Pause sync** | Pause automatic sync (shown only when sync and auto-sync are enabled). |
-| **S3 Sync & Backup: Resume sync** | Resume automatic sync after pausing. |
-| **S3 Sync & Backup: View sync log** | Open the sync log viewer. |
-| **S3 Sync & Backup: View backups** | Open a modal listing recent backups with download buttons. |
-| **S3 Sync & Backup: Open settings** | Open the plugin settings page. |
+| **S3 Sync + Backup: Sync now** | Trigger an immediate sync. |
+| **S3 Sync + Backup: Backup now** | Trigger an immediate backup snapshot. |
+| **S3 Sync + Backup: Pause sync** | Pause automatic sync (shown only when sync and auto-sync are enabled). |
+| **S3 Sync + Backup: Resume sync** | Resume automatic sync after pausing. |
+| **S3 Sync + Backup: View sync log** | Open the sync log viewer. |
+| **S3 Sync + Backup: View backups** | Open a modal listing recent backups with download buttons. |
+| **S3 Sync + Backup: Open settings** | Open the plugin settings page. |
 
 ---
 
@@ -270,7 +270,7 @@ It is <strong>not recommended</strong>. Using two sync solutions simultaneously 
 
 <details>
 <summary><strong>How do I restore from a backup?</strong></summary>
-Go to <strong>Settings → S3 Sync & Backup → Backup → View backups</strong>, or use the <strong>View backups</strong> command from the command palette. The modal lists the 5 most recent backups — click "Download zip" to export one as a ZIP file. Extract it and manually copy files back into your vault.
+Go to <strong>Settings → S3 Sync + Backup → Backup → View backups</strong>, or use the <strong>View backups</strong> command from the command palette. The modal lists the 5 most recent backups — click "Download zip" to export one as a ZIP file. Extract it and manually copy files back into your vault.
 </details>
 
 <details>

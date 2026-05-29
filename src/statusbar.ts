@@ -312,7 +312,7 @@ export class StatusBar {
      */
     private getTooltipContent(): string {
         const lines = [
-            'S3 Sync & Backup',
+            'S3 Sync + Backup',
             '',
             `Sync: ${SYNC_STATUS_SPEC[this.syncState.status].label}`,
         ];

@@ -2,7 +2,7 @@
  * Sync Scheduler Module
  *
  * Manages periodic sync scheduling, pause/resume control, and sync-on-startup
- * functionality for the S3 Sync & Backup plugin.
+ * functionality for the S3 Sync + Backup plugin.
  *
  * The scheduler wraps `window.setInterval` via Obsidian's `Plugin.registerInterval`
  * API so the interval is automatically cleared when the plugin is unloaded —
