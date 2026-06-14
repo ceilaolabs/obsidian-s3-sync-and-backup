@@ -33,7 +33,7 @@
 		"@smithy/node-http-handler": "^4.5.3",
 		"@types/jest": "^29.5.12",
 		"@types/node": "^16.11.6",
-		"esbuild": "0.25.5",
+		"esbuild": "0.28.1",
 		"eslint-plugin-obsidianmd": "0.1.9",
 		"fake-indexeddb": "^6.2.5",
 		"globals": "14.0.0",
