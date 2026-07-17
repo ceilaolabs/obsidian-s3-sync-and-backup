@@ -12,18 +12,19 @@
 /**
  * Supported S3-compatible storage providers
  */
-export type S3ProviderType = 'aws' | 'r2' | 'rustfs' | 'custom';
+export type S3ProviderType = 'aws' | 'r2' | 'b2' | 'rustfs' | 'custom';
 
 /**
  * Provider display names for UI.
  *
  * Insertion order controls the order entries appear in the settings dropdown
  * (driven by `Object.entries(S3_PROVIDER_NAMES)` in `settings.ts`). The desired
- * order is: AWS S3 → Cloudflare R2 → RustFS → Other S3-compatible.
+ * order is: AWS S3 → Cloudflare R2 → Backblaze B2 → RustFS → Other S3-compatible.
  */
 export const S3_PROVIDER_NAMES: Record<S3ProviderType, string> = {
 	aws: 'AWS S3',
 	r2: 'Cloudflare R2',
+	b2: 'Backblaze B2',
 	rustfs: 'RustFS',
 	custom: 'Other S3-compatible',
 };

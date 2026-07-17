@@ -37,7 +37,7 @@ import {
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
 import { PayloadFormat, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
-import { buildS3ClientConfig, validateConnectionSettings } from './S3Config';
+import { buildS3ClientConfig, providerSupportsConditionalWrites, validateConnectionSettings } from './S3Config';
 
 /**
  * S3Provider class
@@ -537,13 +537,21 @@ export class S3Provider {
      * ETag values must be bare hex strings; this method re-adds the required
      * surrounding quotes before forwarding to the SDK.
      *
+     * **Providers without conditional writes** — Backblaze B2 does not implement
+     * conditional `PutObject` (see {@link providerSupportsConditionalWrites}). For
+     * those providers the guard is emulated with a `HeadObject` pre-check
+     * ({@link checkConditionalPrecondition}) that throws the same
+     * `PreconditionFailed` error before uploading without the header. This closes
+     * most of the concurrency window (a small TOCTOU gap remains between the head
+     * and the put), keeping behaviour identical from the caller's perspective.
+     *
      * @param key - Full S3 key for the destination object.
      * @param content - File bytes or UTF-8 string to upload.
      * @param options - Optional content type string, or an options object with
      *   `contentType`, `ifMatch`, `ifNoneMatch`, and/or `metadata` fields.
      * @returns The ETag of the newly created/updated object (quotes/weak-prefix stripped).
      * @throws {Error} On S3/network error, or if a conditional header is not
-     *   satisfied (HTTP 412 Precondition Failed).
+     *   satisfied (HTTP 412 Precondition Failed) — including the emulated case.
      */
 	async uploadFile(
 		key: string,
@@ -557,22 +565,100 @@ export class S3Provider {
             : content;
 
         const contentType = typeof options === 'string' ? options : options?.contentType;
-		const ifMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifMatch);
-		const ifNoneMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifNoneMatch);
+		const rawIfMatch = typeof options === 'string' ? undefined : options?.ifMatch;
+		const rawIfNoneMatch = typeof options === 'string' ? undefined : options?.ifNoneMatch;
 		const metadata = typeof options === 'string' ? undefined : options?.metadata;
+
+		// Decide how to enforce the conditional guard: native headers where the
+		// provider supports them, otherwise a HeadObject pre-check emulation.
+		const hasCondition = Boolean(rawIfMatch || rawIfNoneMatch);
+		const emulateCondition = hasCondition
+			&& !providerSupportsConditionalWrites(this.settings.provider);
+
+		if (emulateCondition) {
+			await this.checkConditionalPrecondition(key, rawIfMatch, rawIfNoneMatch);
+		}
 
         const response = await client.send(new PutObjectCommand({
             Bucket: this.settings.bucket,
             Key: key,
             Body: body,
             ContentType: contentType,
-            IfMatch: ifMatch,
-            IfNoneMatch: ifNoneMatch,
+            IfMatch: emulateCondition ? undefined : this.toConditionalEntityTag(rawIfMatch),
+            IfNoneMatch: emulateCondition ? undefined : this.toConditionalEntityTag(rawIfNoneMatch),
             Metadata: metadata,
         }));
 
 		// Return cleaned ETag (remove quotes and weak prefix)
 		return this.normalizeETag(response.ETag);
+	}
+
+	/**
+	 * Emulate an `If-Match` / `If-None-Match` conditional-write precondition with
+	 * a `HeadObject` pre-check, for providers (e.g. Backblaze B2) that do not
+	 * implement conditional `PutObject`.
+	 *
+	 * Throws a `PreconditionFailed` error (name + HTTP 412 metadata) matching what
+	 * a native conditional write would produce, so callers handle both paths
+	 * identically. Only the forms the sync engine uses are meaningful:
+	 * `ifNoneMatch: '*'` (create-only) and `ifMatch: <etag>` (update-only), but
+	 * the general semantics are honoured.
+	 *
+	 * Note the inherent TOCTOU gap: another writer could change the object between
+	 * this head and the subsequent put. Native conditional writes are atomic and
+	 * do not have this gap; the plugin's planner-level reconciliation is the
+	 * backstop that reconciles any divergence on the next sync.
+	 *
+	 * @param key - Full S3 key being written.
+	 * @param ifMatch - Bare ETag the remote object must currently have, if set.
+	 * @param ifNoneMatch - `'*'` (must be absent) or a bare ETag the remote must
+	 *   NOT currently have, if set.
+	 * @throws {Error} `PreconditionFailed` when the precondition is not satisfied.
+	 */
+	private async checkConditionalPrecondition(
+		key: string,
+		ifMatch?: string,
+		ifNoneMatch?: string,
+	): Promise<void> {
+		const head = await this.headObject(key);
+
+		if (ifNoneMatch) {
+			const conflicts = ifNoneMatch === '*'
+				? head !== null
+				: head !== null && head.etag === this.normalizeETag(ifNoneMatch);
+			if (conflicts) {
+				throw this.createPreconditionFailedError(
+					`Conditional write failed for ${key}: object already exists (If-None-Match).`,
+				);
+			}
+		}
+
+		if (ifMatch) {
+			const expected = this.normalizeETag(ifMatch);
+			if (!head || head.etag !== expected) {
+				throw this.createPreconditionFailedError(
+					`Conditional write failed for ${key}: remote ETag ${head?.etag ?? '<absent>'} `
+						+ `does not match expected ${expected} (If-Match).`,
+				);
+			}
+		}
+	}
+
+	/**
+	 * Build an error mirroring a native S3 `PreconditionFailed` (HTTP 412) so the
+	 * emulated conditional-write path is indistinguishable to callers.
+	 *
+	 * @param message - Human-readable failure description.
+	 * @returns An `Error` with `name = 'PreconditionFailed'` and a 412 `$metadata`.
+	 */
+	private createPreconditionFailedError(message: string): Error {
+		const error = new Error(message) as Error & {
+			name: string;
+			$metadata?: { httpStatusCode: number };
+		};
+		error.name = 'PreconditionFailed';
+		error.$metadata = { httpStatusCode: 412 };
+		return error;
 	}
 
 	/**

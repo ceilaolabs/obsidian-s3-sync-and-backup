@@ -52,6 +52,14 @@ export function getEndpointForProvider(settings: S3SyncBackupSettings): string |
             }
             throw new Error('Cloudflare R2 requires an endpoint URL (https://<ACCOUNT_ID>.r2.cloudflarestorage.com)');
 
+        case 'b2':
+            // Backblaze B2 exposes an S3-compatible endpoint per region.
+            // Format: https://s3.<REGION>.backblazeb2.com (e.g. s3.us-west-004.backblazeb2.com)
+            if (settings.endpoint) {
+                return settings.endpoint;
+            }
+            throw new Error('Backblaze B2 requires an endpoint URL (https://s3.<REGION>.backblazeb2.com)');
+
         case 'rustfs':
             // RustFS is self-hosted and always requires a custom endpoint URL
             // (e.g., http://localhost:9000 for a local deployment).
@@ -101,6 +109,13 @@ export function shouldForcePathStyle(settings: S3SyncBackupSettings): boolean {
             // R2 works with both, but path-style is more reliable
             return true;
 
+        case 'b2':
+            // Backblaze B2 supports both addressing modes, but path-style is the
+            // more reliable default: it avoids virtual-hosted DNS/SNI edge cases
+            // for buckets whose names are not fully DNS-safe, and works against
+            // the regional S3 endpoint on every B2 account.
+            return true;
+
         case 'aws':
             // AWS prefers virtual-hosted, but respect user setting
             return settings.forcePathStyle;
@@ -112,6 +127,25 @@ export function shouldForcePathStyle(settings: S3SyncBackupSettings): boolean {
         default:
             return settings.forcePathStyle;
     }
+}
+
+/**
+ * Whether a provider's S3 API implements conditional writes
+ * (`If-Match` / `If-None-Match` on `PutObject`).
+ *
+ * The sync engine uses these headers as an optimistic-concurrency guard on every
+ * upload. Most S3-compatible providers honour them, but **Backblaze B2 does not**:
+ * its S3 API returns `501 NotImplemented` ("A header you provided implies
+ * functionality that is not implemented") for any conditional `PutObject`. For
+ * such providers, {@link S3Provider.uploadFile} emulates the guard with a
+ * `HeadObject` pre-check instead of sending the unsupported header.
+ *
+ * @param provider - Provider type from settings.
+ * @returns `true` if native conditional writes can be used, `false` if they must
+ *   be emulated.
+ */
+export function providerSupportsConditionalWrites(provider: S3ProviderType): boolean {
+    return provider !== 'b2';
 }
 
 /**
@@ -141,6 +175,25 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
             secretAccessKey: settings.secretAccessKey,
         },
         forcePathStyle: shouldForcePathStyle(settings),
+        // Disable the SDK's default flexible-checksum behaviour for portability.
+        //
+        // Since @aws-sdk/client-s3 v3.729.0 the client defaults
+        // `requestChecksumCalculation` to `'WHEN_SUPPORTED'`, which auto-adds
+        // modern integrity headers (`x-amz-checksum-crc32`,
+        // `x-amz-sdk-checksum-algorithm`) to body-bearing requests such as
+        // `PutObject`.  AWS documents that some third-party S3-compatible
+        // services reject these with "A header you provided implies
+        // functionality that is not implemented".  Pinning both knobs to
+        // `'WHEN_REQUIRED'` restricts checksums to operations that mandate them,
+        // keeping uploads portable across every S3-compatible endpoint.
+        //
+        // Note: for the Backblaze B2 incompatibility in issue #78 the *confirmed*
+        // blocker was conditional-write headers, not checksums (B2 accepts CRC32
+        // on plain PutObject) — that is handled separately via the HeadObject
+        // emulation in `S3Provider.uploadFile`.  This setting remains a defensive
+        // measure for providers/regions that do reject the checksum headers.
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
         // Route all HTTP traffic through Obsidian's requestUrl API.  This is
         // required because the plugin runs in a browser-like Electron context
         // where native fetch() is blocked by CORS for S3-compatible origins.
@@ -201,6 +254,10 @@ export function validateConnectionSettings(settings: S3SyncBackupSettings): stri
         errors.push('Cloudflare R2 requires an endpoint URL');
     }
 
+    if (settings.provider === 'b2' && !settings.endpoint) {
+        errors.push('Backblaze B2 requires an endpoint URL');
+    }
+
     if (settings.provider === 'rustfs' && !settings.endpoint) {
         errors.push('RustFS requires an endpoint URL');
     }
@@ -233,6 +290,8 @@ export function getProviderDisplayName(provider: S3ProviderType): string {
             return 'AWS S3';
         case 'r2':
             return 'Cloudflare R2';
+        case 'b2':
+            return 'Backblaze B2';
         case 'rustfs':
             return 'RustFS';
         case 'custom':
