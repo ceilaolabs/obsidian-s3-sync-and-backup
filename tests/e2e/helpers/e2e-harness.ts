@@ -6,8 +6,6 @@
  * and fake-indexeddb (SyncJournal) instead of the Obsidian runtime.
  */
 
-import { S3Client } from '@aws-sdk/client-s3';
-import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { App } from 'obsidian';
 
 import { S3SyncBackupSettings } from '../../../src/types';
@@ -21,13 +19,17 @@ import { SnapshotCreator } from '../../../src/backup/SnapshotCreator';
 import { RetentionManager } from '../../../src/backup/RetentionManager';
 import { E2EVault, E2EApp } from './mock-vault';
 import {
+	TestProvider,
 	hasS3Credentials,
-	getS3Config,
+	getConfiguredProviders,
+	describeEachProvider,
+	createTestS3Client,
 	getTestPrefix,
 	createTestSettings,
 } from '../../helpers/s3-test-utils';
 
-export { hasS3Credentials };
+export { hasS3Credentials, getConfiguredProviders, describeEachProvider };
+export type { TestProvider };
 
 /** All modules wired up for a single simulated device. */
 export interface E2EDevice {
@@ -47,6 +49,8 @@ export interface E2EDevice {
 
 /** Options for creating an E2E device. */
 export interface CreateDeviceOptions {
+	/** Provider matrix entry whose real bucket/credentials this device targets. */
+	provider: TestProvider;
 	deviceId?: string;
 	encryptionKey?: Uint8Array | null;
 	settingsOverrides?: Partial<S3SyncBackupSettings>;
@@ -57,26 +61,18 @@ export interface CreateDeviceOptions {
 /**
  * Creates a fully wired E2E device — real plugin modules backed by in-memory
  * vault, fake-indexeddb journal, and real S3.
+ *
+ * The injected `S3Client` is built via {@link createTestS3Client}, which routes
+ * through the plugin's production config builder (so the checksum fix and all
+ * provider-specific knobs are exercised) with only the HTTP handler swapped for
+ * a Node-compatible one.
  */
 export function createDevice(options: CreateDeviceOptions): E2EDevice {
 	const deviceId = options.deviceId ?? `e2e-device-${Math.random().toString(36).substring(7)}`;
-	const config = getS3Config();
 
-	const nodeClient = new S3Client({
-		endpoint: config.endpoint,
-		region: config.region,
-		credentials: {
-			accessKeyId: config.accessKeyId,
-			secretAccessKey: config.secretAccessKey,
-		},
-		forcePathStyle: true,
-		requestHandler: new NodeHttpHandler({
-			connectionTimeout: 5000,
-			socketTimeout: 30000,
-		}),
-	});
+	const nodeClient = createTestS3Client(options.provider);
 
-	const settings = createTestSettings({
+	const settings = createTestSettings(options.provider, {
 		syncPrefix: options.testPrefix,
 		backupPrefix: `${options.testPrefix}-backups`,
 		debugLogging: true,

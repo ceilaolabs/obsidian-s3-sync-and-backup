@@ -189,25 +189,42 @@ Tests are essential. We maintain a **75% minimum coverage threshold** enforced b
 
 **Test file naming**: `tests/<domain>/<ModuleName>.test.ts`
 
-### Integration Tests
+### Integration & E2E Tests
 
--   **Location**: `tests/**/*.integration.test.ts`
--   **Focus**: Real S3 operations against a live bucket
--   **Config**: Requires `.env` file with S3 credentials
+-   **Location**: `tests/**/*.integration.test.ts` (raw S3 + `S3Provider` operations)
+    and `tests/e2e/*.e2e.test.ts` (full sync/backup/encryption/multi-device pipelines).
+-   **Focus**: Real S3 operations against live buckets, **per provider**.
+-   **Config**: Requires a `.env` file with credentials for one or more providers.
+
+Integration/E2E tests are **multi-provider**: they run against every provider whose
+credentials are configured (via `describe.each`) and skip the rest. Each provider
+has its own env-var prefix (`CF_` for Cloudflare R2, `BB_` for Backblaze B2, …).
 
 **Setup:**
 1.  Copy `.env.sample` to `.env`.
-2.  Fill in valid S3 credentials:
+2.  Fill in credentials for the provider(s) you want to test. Each provider needs
+    the five prefixed variables — e.g. for Cloudflare R2:
     ```env
-    S3_ENDPOINT=...
-    S3_REGION=...
-    S3_BUCKET=...
-    S3_ACCESS_KEY=...
-    S3_SECRET_KEY=...
+    CF_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+    CF_BUCKET_NAME=...
+    CF_ACCESS_KEY=...
+    CF_SECRET_ACCESS_KEY=...
+    CF_REGION=auto
     ```
-3.  Run: `npm run test:integration`
+    and for Backblaze B2 (`BB_URL`, `BB_BUCKET_NAME`, `BB_ACCESS_KEY`,
+    `BB_SECRET_ACCESS_KEY`, `BB_REGION`). Configure as many as you like.
+3.  Run: `npm run test:integration` and/or `npm run test:e2e`.
 
-> ⚠️ Integration tests create and delete objects in the specified bucket. Use a dedicated test bucket. Most cloud providers offer generous free tiers well above these limits.
+**Adding a new provider** to the matrix:
+1.  Append an entry to `TEST_PROVIDERS` in `tests/helpers/s3-test-utils.ts`
+    (`{ id, name, envPrefix, provider }`).
+2.  Add the matching credential block to `.env.sample` (and your `.env`).
+3.  If it needs a first-class plugin option, add it to `S3ProviderType` /
+    `S3_PROVIDER_NAMES` in `src/types.ts` and the switches in `src/storage/S3Config.ts`.
+
+> ⚠️ Integration/E2E tests create and delete objects in the specified buckets. Use
+> a dedicated test bucket per provider. Most cloud providers offer generous free
+> tiers well above these limits.
 
 ### Coverage
 
@@ -231,7 +248,7 @@ When filing a bug report on [GitHub Issues](https://github.com/ceilaolabs/obsidi
 3.  **Include:**
     -   Obsidian version and platform (desktop/mobile, OS)
     -   Plugin version
-    -   S3 provider (AWS, R2, RustFS, etc.)
+    -   S3 provider (AWS, R2, Backblaze B2, RustFS, etc.)
     -   Steps to reproduce
     -   Expected vs. actual behavior
     -   Console errors (if any — open DevTools with `Cmd/Ctrl + Shift + I`)

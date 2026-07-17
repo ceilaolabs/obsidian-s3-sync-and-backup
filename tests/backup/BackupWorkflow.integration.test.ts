@@ -19,25 +19,22 @@ import {
     ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import {
+    TestProvider,
     createTestS3Client,
-    hasS3Credentials,
     getS3Config,
     getTestPrefix,
+    describeEachProvider,
 } from '../helpers/s3-test-utils';
 import { BackupManifest } from '../../src/types';
 
-describe('Backup Workflow Integration Tests', () => {
+describeEachProvider()('Backup Workflow Integration Tests [$name]', (provider: TestProvider) => {
     let client: S3Client;
     let bucket: string;
     let backupPrefix: string;
 
     beforeAll(() => {
-        if (!hasS3Credentials()) {
-            console.warn('⚠️ S3 credentials not configured, skipping integration tests');
-            return;
-        }
-        client = createTestS3Client();
-        bucket = getS3Config().bucket;
+        client = createTestS3Client(provider);
+        bucket = getS3Config(provider).bucket;
         backupPrefix = getTestPrefix('backup');
     });
 
@@ -77,8 +74,6 @@ describe('Backup Workflow Integration Tests', () => {
 
     describe('Backup File Structure', () => {
         it('should create backup folder with timestamp naming', async () => {
-            if (!hasS3Credentials()) return;
-
             const backupName = generateBackupName();
             const testFile = `${backupPrefix}/${backupName}/Notes/test.md`;
 
@@ -98,8 +93,6 @@ describe('Backup Workflow Integration Tests', () => {
         });
 
         it('should maintain complete backup structure with manifest', async () => {
-            if (!hasS3Credentials()) return;
-
             const backupName = generateBackupName() + '-full';
             const files = [
                 { path: 'Notes/readme.md', content: '# Readme' },
@@ -147,8 +140,6 @@ describe('Backup Workflow Integration Tests', () => {
 
     describe('Backup Listing', () => {
         it('should read backup manifest for info display', async () => {
-            if (!hasS3Credentials()) return;
-
             const backupName = generateBackupName() + '-info';
             const manifestKey = `${backupPrefix}/${backupName}/.backup-manifest.json`;
 
@@ -186,8 +177,6 @@ describe('Backup Workflow Integration Tests', () => {
 
     describe('Backup Cleanup (Retention)', () => {
         it('should delete entire backup folder', async () => {
-            if (!hasS3Credentials()) return;
-
             const backupName = generateBackupName() + '-retention';
             const backupPath = `${backupPrefix}/${backupName}`;
 

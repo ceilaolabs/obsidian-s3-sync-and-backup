@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Obsidian S3 Sync + Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, Cloudflare R2, RustFS) with optional end-to-end encryption.
+**Obsidian S3 Sync + Backup** — An Obsidian community plugin that provides bi-directional vault synchronization and scheduled backups for S3-compatible storage (AWS S3, Cloudflare R2, Backblaze B2, RustFS) with optional end-to-end encryption.
 
 **Plugin ID:** `simple-storage-sync-and-backup`
 
@@ -154,10 +154,17 @@ npm run dev             # Development build with watch
 npm run build           # Production build (tsc + esbuild)
 npm run lint            # Run ESLint (mandatory after every change)
 npm run test:unit       # Run unit tests
-npm run test:integration # Run integration tests (requires .env with S3 creds)
+npm run test:integration # Per-provider integration tests (requires .env; see .env.sample)
+npm run test:e2e        # Per-provider end-to-end pipeline tests (requires .env)
 npm run test:coverage   # Unit tests with coverage report
 npm run test:watch      # Watch mode
 ```
+
+**Multi-provider tests:** Integration/E2E tests run against every S3 provider whose
+credentials are configured in `.env` and skip the rest. Each provider uses its own
+env-var prefix (`CF_` = Cloudflare R2, `BB_` = Backblaze B2). The matrix lives in
+`TEST_PROVIDERS` (`tests/helpers/s3-test-utils.ts`); see `.env.sample` and
+CONTRIBUTING.md for how to add a provider.
 
 ### Linting Rules
 

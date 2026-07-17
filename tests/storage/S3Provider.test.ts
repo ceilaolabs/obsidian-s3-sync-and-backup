@@ -2,7 +2,7 @@
  * Unit tests for S3Provider request shaping.
  */
 
-import { ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { S3Provider } from '../../src/storage/S3Provider';
 import { S3SyncBackupSettings } from '../../src/types';
 
@@ -63,6 +63,92 @@ describe('S3Provider', () => {
 
 		const command = send.mock.calls[0][0] as PutObjectCommand;
 		expect(command.input.IfMatch).toBe('"abc123"');
+	});
+
+	/**
+	 * Backblaze B2 does not implement conditional PutObject, so
+	 * `providerSupportsConditionalWrites('b2')` is false and uploadFile must
+	 * emulate the guard with a HeadObject pre-check, then upload WITHOUT the
+	 * If-Match / If-None-Match headers. These tests pin that contract with a
+	 * mocked client (the real behaviour is also covered by the B2 provider
+	 * integration matrix).
+	 */
+	describe('conditional-write emulation (providers without native support)', () => {
+		function b2Settings(): S3SyncBackupSettings {
+			return createSettings({ provider: 'b2', endpoint: 'https://s3.us-west-004.backblazeb2.com' });
+		}
+
+		it('create-only (If-None-Match: *) uploads without the header when the object is absent', async () => {
+			const provider = new S3Provider(b2Settings());
+			const send = jest.fn().mockImplementation((cmd) => {
+				if (cmd instanceof HeadObjectCommand) {
+					return Promise.reject({ name: 'NotFound' }); // object absent
+				}
+				return Promise.resolve({ ETag: '"created"' });
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const etag = await provider.uploadFile('vault/new.md', 'hello', { ifNoneMatch: '*' });
+
+			// First a HeadObject pre-check, then a PutObject with NO conditional headers.
+			expect(send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+			const put = send.mock.calls[1][0] as PutObjectCommand;
+			expect(put).toBeInstanceOf(PutObjectCommand);
+			expect(put.input.IfNoneMatch).toBeUndefined();
+			expect(put.input.IfMatch).toBeUndefined();
+			expect(etag).toBe('created');
+		});
+
+		it('create-only (If-None-Match: *) throws PreconditionFailed when the object already exists', async () => {
+			const provider = new S3Provider(b2Settings());
+			const send = jest.fn().mockImplementation((cmd) => {
+				if (cmd instanceof HeadObjectCommand) {
+					return Promise.resolve({ ETag: '"exists"', ContentLength: 1, LastModified: new Date(0) });
+				}
+				return Promise.resolve({ ETag: '"should-not-happen"' });
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			await expect(
+				provider.uploadFile('vault/exists.md', 'hello', { ifNoneMatch: '*' }),
+			).rejects.toMatchObject({ name: 'PreconditionFailed' });
+
+			// The PutObject must never be sent once the precondition fails.
+			expect(send.mock.calls.some(([cmd]) => cmd instanceof PutObjectCommand)).toBe(false);
+		});
+
+		it('update-only (If-Match) uploads without the header when the remote ETag matches', async () => {
+			const provider = new S3Provider(b2Settings());
+			const send = jest.fn().mockImplementation((cmd) => {
+				if (cmd instanceof HeadObjectCommand) {
+					return Promise.resolve({ ETag: '"abc123"', ContentLength: 1, LastModified: new Date(0) });
+				}
+				return Promise.resolve({ ETag: '"updated"' });
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const etag = await provider.uploadFile('vault/update.md', 'hello', { ifMatch: 'abc123' });
+
+			const put = send.mock.calls[1][0] as PutObjectCommand;
+			expect(put.input.IfMatch).toBeUndefined();
+			expect(etag).toBe('updated');
+		});
+
+		it('update-only (If-Match) throws PreconditionFailed when the remote ETag differs', async () => {
+			const provider = new S3Provider(b2Settings());
+			const send = jest.fn().mockImplementation((cmd) => {
+				if (cmd instanceof HeadObjectCommand) {
+					return Promise.resolve({ ETag: '"different"', ContentLength: 1, LastModified: new Date(0) });
+				}
+				return Promise.resolve({ ETag: '"should-not-happen"' });
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			await expect(
+				provider.uploadFile('vault/update.md', 'hello', { ifMatch: 'abc123' }),
+			).rejects.toMatchObject({ name: 'PreconditionFailed' });
+			expect(send.mock.calls.some(([cmd]) => cmd instanceof PutObjectCommand)).toBe(false);
+		});
 	});
 
 	describe('downloadFileAsTextWithEtag', () => {

@@ -135,9 +135,9 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		// Region
 		new Setting(containerEl)
 			.setName('Region')
-			.setDesc(this.plugin.settings.provider === 'r2' ? 'Use "auto" for Cloudflare R2' : 'AWS region (e.g., us-east-1)')
+			.setDesc(this.getRegionDescription())
 			.addText((text) => {
-				text.setPlaceholder(this.plugin.settings.provider === 'r2' ? 'auto' : 'us-east-1');
+				text.setPlaceholder(this.getRegionPlaceholder());
 				text.setValue(this.plugin.settings.region);
 				text.onChange(async (value) => {
 					this.plugin.settings.region = value;
@@ -227,6 +227,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		switch (this.plugin.settings.provider) {
 			case 'r2':
 				return 'Your R2 endpoint URL (https://<ACCOUNT_ID>.r2.cloudflarestorage.com)';
+			case 'b2':
+				return 'Your Backblaze B2 S3 endpoint URL (https://s3.<REGION>.backblazeb2.com)';
 			case 'rustfs':
 				return 'Your RustFS server URL (e.g., http://localhost:9000)';
 			case 'custom':
@@ -249,12 +251,51 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		switch (this.plugin.settings.provider) {
 			case 'r2':
 				return 'https://abc123.r2.cloudflarestorage.com';
+			case 'b2':
+				return 'https://s3.us-west-004.backblazeb2.com';
 			case 'rustfs':
 				return 'http://localhost:9000';
 			case 'custom':
 				return 'https://s3.example.com';
 			default:
 				return '';
+		}
+	}
+
+	/**
+	 * Return a human-readable description for the region field.
+	 *
+	 * The region carries different meaning per provider: Cloudflare R2 ignores it
+	 * (the documented value is `"auto"`), Backblaze B2 requires the region baked
+	 * into its endpoint (e.g. `us-west-004`) because SigV4 signing must match, and
+	 * AWS uses a standard region code.
+	 *
+	 * @returns A localized description string appropriate for the current provider.
+	 */
+	private getRegionDescription(): string {
+		switch (this.plugin.settings.provider) {
+			case 'r2':
+				return 'Use "auto" for Cloudflare R2';
+			case 'b2':
+				return 'Your Backblaze B2 region, matching the endpoint (e.g., us-west-004)';
+			default:
+				return 'AWS region (e.g., us-east-1)';
+		}
+	}
+
+	/**
+	 * Return the placeholder text for the region input field.
+	 *
+	 * @returns A provider-specific example region string.
+	 */
+	private getRegionPlaceholder(): string {
+		switch (this.plugin.settings.provider) {
+			case 'r2':
+				return 'auto';
+			case 'b2':
+				return 'us-west-004';
+			default:
+				return 'us-east-1';
 		}
 	}
 

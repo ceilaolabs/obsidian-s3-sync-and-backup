@@ -117,12 +117,21 @@ jobs:
     if: needs.check-skip.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     env:
-      # S3 credentials for integration tests (from repository secrets)
-      S3_URL: ${{ secrets.S3_URL }}
-      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
-      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-      S3_REGION: ${{ secrets.S3_REGION }}
+      # Per-provider S3 credentials for integration/E2E tests (from repository secrets).
+      # Configure the providers you want CI to exercise; each is independent and
+      # tests skip any provider whose *_URL secret is empty. See .env.sample.
+      # Cloudflare R2
+      CF_URL: ${{ secrets.CF_URL }}
+      CF_BUCKET_NAME: ${{ secrets.CF_BUCKET_NAME }}
+      CF_ACCESS_KEY: ${{ secrets.CF_ACCESS_KEY }}
+      CF_SECRET_ACCESS_KEY: ${{ secrets.CF_SECRET_ACCESS_KEY }}
+      CF_REGION: ${{ secrets.CF_REGION }}
+      # Backblaze B2
+      BB_URL: ${{ secrets.BB_URL }}
+      BB_BUCKET_NAME: ${{ secrets.BB_BUCKET_NAME }}
+      BB_ACCESS_KEY: ${{ secrets.BB_ACCESS_KEY }}
+      BB_SECRET_ACCESS_KEY: ${{ secrets.BB_SECRET_ACCESS_KEY }}
+      BB_REGION: ${{ secrets.BB_REGION }}
     steps:
       - uses: actions/checkout@v6
 
@@ -137,28 +146,16 @@ jobs:
       - name: Run Unit Tests
         run: npm run test:unit -- --coverage
 
-      # Run integration tests (if S3 credentials are configured)
-      # The npm script conditionally loads .env if it exists
+      # Run integration tests against every provider whose credentials are set.
+      # Runs when at least one provider is configured; the suite skips the rest.
       - name: Run Integration Tests
-        if: env.S3_URL != ''
-        env:
-          S3_URL: ${{ secrets.S3_URL }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
-          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          S3_REGION: ${{ secrets.S3_REGION }}
+        if: env.CF_URL != '' || env.BB_URL != ''
         run: npm run test:integration
 
-      # Run E2E pipeline tests (if S3 credentials are configured)
-      # These exercise full sync, encryption, backup, and multi-device workflows
+      # Run E2E pipeline tests against every configured provider.
+      # These exercise full sync, encryption, backup, and multi-device workflows.
       - name: Run E2E Tests
-        if: env.S3_URL != ''
-        env:
-          S3_URL: ${{ secrets.S3_URL }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
-          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          S3_REGION: ${{ secrets.S3_REGION }}
+        if: env.CF_URL != '' || env.BB_URL != ''
         run: npm run test:e2e
 
       # Upload coverage report as artifact for later review

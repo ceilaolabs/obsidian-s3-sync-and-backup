@@ -16,19 +16,24 @@ import { decrypt, encrypt } from '../../src/crypto/FileEncryptor';
 import { hashContent } from '../../src/crypto/Hasher';
 import { deriveKey } from '../../src/crypto/KeyDerivation';
 import { encodeMetadata } from '../../src/sync/SyncObjectMetadata';
-import { E2EDevice, cleanupS3Prefix, createDevice, generateTestPrefix, hasS3Credentials, initDevice, teardownDevice } from './helpers/e2e-harness';
+import { E2EDevice, TestProvider, cleanupS3Prefix, createDevice, generateTestPrefix, describeEachProvider, initDevice, teardownDevice } from './helpers/e2e-harness';
 
-const describeIfS3 = hasS3Credentials() ? describe : describe.skip;
+const describeEach = describeEachProvider();
 
 /**
  * Creates and initializes a device for a scenario-specific child prefix.
+ *
+ * `provider` selects which configured backend (R2, B2, …) the device targets;
+ * within a suite it is supplied by the per-provider `makeDevice` wrapper.
  */
 async function createInitializedDevice(options: {
+	provider: TestProvider;
 	deviceId: string;
 	testPrefix: string;
 	encryptionKey?: Uint8Array | null;
 }): Promise<E2EDevice> {
 	const device = createDevice({
+		provider: options.provider,
 		deviceId: options.deviceId,
 		testPrefix: options.testPrefix,
 		encryptionKey: options.encryptionKey ?? null,
@@ -63,18 +68,26 @@ async function createPlaintextFingerprint(content: string): Promise<string> {
 /**
  * Encryption workflows through the real sync pipeline and real S3.
  */
-describeIfS3('E2E encryption workflow', () => {
+describeEach('E2E encryption workflow [$name]', (provider: TestProvider) => {
 	let suitePrefix: string;
 	let suiteSalt: Uint8Array;
 	let suiteEncryptionKey: Uint8Array;
 	let suiteDevice: E2EDevice;
 	const devices: E2EDevice[] = [];
 
+	/**
+	 * Per-provider wrapper around {@link createInitializedDevice} that injects the
+	 * current suite's `provider`, so individual scenarios stay provider-agnostic.
+	 */
+	const makeDevice = (
+		options: { deviceId: string; testPrefix: string; encryptionKey?: Uint8Array | null },
+	): Promise<E2EDevice> => createInitializedDevice({ provider, ...options });
+
 	beforeAll(async () => {
 		suitePrefix = generateTestPrefix('encryption-workflow');
 		suiteSalt = randomFillSync(new Uint8Array(32));
 		suiteEncryptionKey = await deriveKey('correct horse battery staple', suiteSalt);
-		suiteDevice = await createInitializedDevice({
+		suiteDevice = await makeDevice({
 			deviceId: 'suite-encrypted-device',
 			testPrefix: suitePrefix,
 			encryptionKey: suiteEncryptionKey,
@@ -95,7 +108,7 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies that sync uploads ciphertext rather than plaintext bytes. */
 	it('uploads encrypted ciphertext to S3 instead of plaintext when encryption is enabled', async () => {
 		const scenarioPrefix = `${suitePrefix}/encrypted-upload`;
-		const device = await createInitializedDevice({
+		const device = await makeDevice({
 			deviceId: 'encrypted-upload-device',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
@@ -124,7 +137,7 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies that the codec can decrypt a downloaded encrypted payload. */
 	it('decrypts an encrypted S3 payload back to the original plaintext on download', async () => {
 		const scenarioPrefix = `${suitePrefix}/codec-decrypt`;
-		const device = await createInitializedDevice({
+		const device = await makeDevice({
 			deviceId: 'codec-decrypt-device',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
@@ -149,14 +162,14 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies a full encrypted round-trip between two devices sharing the same key. */
 	it('round-trips an encrypted file from device A to device B when both share the same key', async () => {
 		const scenarioPrefix = `${suitePrefix}/round-trip`;
-		const deviceA = await createInitializedDevice({
+		const deviceA = await makeDevice({
 			deviceId: 'device-a',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
 		});
 		devices.push(deviceA);
 
-		const deviceB = await createInitializedDevice({
+		const deviceB = await makeDevice({
 			deviceId: 'device-b',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
@@ -181,7 +194,7 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies that a device with the wrong key fails when it encounters encrypted content. */
 	it('fails gracefully when a second device syncs encrypted content with the wrong passphrase-derived key', async () => {
 		const scenarioPrefix = `${suitePrefix}/wrong-passphrase`;
-		const deviceA = await createInitializedDevice({
+		const deviceA = await makeDevice({
 			deviceId: 'wrong-pass-source',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
@@ -189,7 +202,7 @@ describeIfS3('E2E encryption workflow', () => {
 		devices.push(deviceA);
 
 		const wrongKey = await deriveKey('this is definitely the wrong passphrase', suiteSalt);
-		const deviceB = await createInitializedDevice({
+		const deviceB = await makeDevice({
 			deviceId: 'wrong-pass-target',
 			testPrefix: scenarioPrefix,
 			encryptionKey: wrongKey,
@@ -217,7 +230,7 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies that devices without an encryption key upload plaintext bytes. */
 	it('uploads plaintext bytes to S3 when no encryption key is configured', async () => {
 		const scenarioPrefix = `${suitePrefix}/plaintext-upload`;
-		const device = await createInitializedDevice({
+		const device = await makeDevice({
 			deviceId: 'plaintext-device',
 			testPrefix: scenarioPrefix,
 			encryptionKey: null,
@@ -242,7 +255,7 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies that an encrypted device still accepts plaintext-tagged remote payloads. */
 	it('downloads and reads plaintext-tagged remote objects even when the syncing device has encryption enabled', async () => {
 		const scenarioPrefix = `${suitePrefix}/mixed-format`;
-		const device = await createInitializedDevice({
+		const device = await makeDevice({
 			deviceId: 'mixed-format-device',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
@@ -272,7 +285,7 @@ describeIfS3('E2E encryption workflow', () => {
 	/** Verifies that a manually encrypted remote object is readable through the sync pipeline. */
 	it('downloads a manually encrypted remote object when metadata marks it as xsalsa20poly1305-v1', async () => {
 		const scenarioPrefix = `${suitePrefix}/manual-encrypted-object`;
-		const device = await createInitializedDevice({
+		const device = await makeDevice({
 			deviceId: 'manual-encrypted-device',
 			testPrefix: scenarioPrefix,
 			encryptionKey: suiteEncryptionKey,
