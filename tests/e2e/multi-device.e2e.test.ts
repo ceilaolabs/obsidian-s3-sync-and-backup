@@ -14,13 +14,14 @@ import {
 	cleanupS3Prefix,
 	createDevice,
 	type E2EDevice,
+	type TestProvider,
 	generateTestPrefix,
-	hasS3Credentials,
+	describeEachProvider,
 	initDevice,
 	teardownDevice,
 } from './helpers/e2e-harness';
 
-const describeIfS3 = hasS3Credentials() ? describe : describe.skip;
+const describeEach = describeEachProvider();
 
 function getFileOrThrow(device: E2EDevice, path: string): TFile {
 	const file = device.vault.getAbstractFileByPath(path);
@@ -59,15 +60,15 @@ function expectSuccessfulSync(result: SyncResult): void {
  * Covers real multi-device reconciliation using two independent devices that
  * share one S3 prefix but maintain separate local vaults and journals.
  */
-describeIfS3('E2E multi-device sync', () => {
+describeEach('E2E multi-device sync [$name]', (provider: TestProvider) => {
 	let testPrefix: string;
 	let deviceA: E2EDevice;
 	let deviceB: E2EDevice;
 
 	beforeEach(async () => {
 		testPrefix = generateTestPrefix('multi-device');
-		deviceA = createDevice({ testPrefix, deviceId: 'device-a' });
-		deviceB = createDevice({ testPrefix, deviceId: 'device-b' });
+		deviceA = createDevice({ provider, testPrefix, deviceId: 'device-a' });
+		deviceB = createDevice({ provider, testPrefix, deviceId: 'device-b' });
 
 		await initDevice(deviceA);
 		await initDevice(deviceB);

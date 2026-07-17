@@ -1,12 +1,16 @@
 /**
- * Integration tests for S3 operations
+ * Integration tests for raw S3 operations — per provider.
  *
- * These tests perform REAL S3 operations against a configured S3-compatible bucket.
- * Uses direct S3Client (not S3Provider) to avoid Obsidian-specific dependencies.
+ * These tests perform REAL S3 operations against every configured S3-compatible
+ * bucket (Cloudflare R2, Backblaze B2, …). They use a direct `S3Client` (built
+ * via the plugin's production config through `createTestS3Client`) rather than
+ * `S3Provider`, to validate wire-level SDK behaviour independently of the
+ * higher-level provider wrapper. For plugin-method coverage see
+ * `ProviderCompatibility.integration.test.ts`.
  *
- * Test files are created under __test__/ prefix and cleaned up after each test.
- *
- * Environment variables required (see .env.sample)
+ * Test files are created under a unique `__test__/` prefix and cleaned up after
+ * the run. Providers without credentials are skipped automatically
+ * (see `.env.sample`).
  */
 
 import {
@@ -19,57 +23,22 @@ import {
     HeadBucketCommand,
 } from '@aws-sdk/client-s3';
 import {
+    TestProvider,
     createTestS3Client,
-    hasS3Credentials,
     getS3Config,
     getTestPrefix,
+    describeEachProvider,
 } from '../helpers/s3-test-utils';
 
-/**
- * Helper to convert stream to Uint8Array
- */
-async function streamToBytes(stream: ReadableStream<Uint8Array> | NodeJS.ReadableStream): Promise<Uint8Array> {
-    const chunks: Uint8Array[] = [];
-
-    // Handle both Web ReadableStream and Node.js ReadableStream
-    if ('getReader' in stream) {
-        // Web ReadableStream
-        const reader = stream.getReader();
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) chunks.push(value);
-        }
-    } else {
-        // Node.js ReadableStream
-        for await (const chunk of stream as AsyncIterable<Buffer>) {
-            chunks.push(new Uint8Array(chunk));
-        }
-    }
-
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-    }
-    return result;
-}
-
-describe('S3 Integration Tests', () => {
+describeEachProvider()('S3 Integration Tests [$name]', (provider: TestProvider) => {
     let client: S3Client;
     let bucket: string;
     let testPrefix: string;
     const createdKeys: string[] = [];
 
     beforeAll(() => {
-        if (!hasS3Credentials()) {
-            console.warn('⚠️ S3 credentials not configured, skipping integration tests');
-            return;
-        }
-        client = createTestS3Client();
-        bucket = getS3Config().bucket;
+        client = createTestS3Client(provider);
+        bucket = getS3Config(provider).bucket;
         testPrefix = getTestPrefix('s3');
     });
 
@@ -85,7 +54,7 @@ describe('S3 Integration Tests', () => {
                     },
                 }));
             } catch {
-                console.warn('Failed to clean up some test files');
+                console.warn(`Failed to clean up some test files for ${provider.name}`);
             }
             client.destroy();
         }
@@ -98,8 +67,6 @@ describe('S3 Integration Tests', () => {
 
     describe('Connection', () => {
         it('should successfully connect to configured bucket', async () => {
-            if (!hasS3Credentials()) return;
-
             const response = await client.send(new HeadBucketCommand({
                 Bucket: bucket,
             }));
@@ -110,8 +77,6 @@ describe('S3 Integration Tests', () => {
 
     describe('Upload and Download', () => {
         it('should upload and download text content', async () => {
-            if (!hasS3Credentials()) return;
-
             const key = trackKey(`${testPrefix}/test-text.txt`);
             const content = 'Hello, S3 Integration Test!';
 
@@ -133,8 +98,6 @@ describe('S3 Integration Tests', () => {
         });
 
         it('should upload and download binary content', async () => {
-            if (!hasS3Credentials()) return;
-
             const key = trackKey(`${testPrefix}/test-binary.bin`);
             const content = new Uint8Array([0, 1, 2, 255, 128, 64, 32, 16, 8, 4]);
 
@@ -154,8 +117,6 @@ describe('S3 Integration Tests', () => {
         });
 
         it('should handle large files (100KB)', async () => {
-            if (!hasS3Credentials()) return;
-
             const key = trackKey(`${testPrefix}/test-large.bin`);
             const content = new Uint8Array(100 * 1024);
             for (let i = 0; i < content.length; i++) {
@@ -178,8 +139,6 @@ describe('S3 Integration Tests', () => {
         });
 
         it('should handle Unicode content', async () => {
-            if (!hasS3Credentials()) return;
-
             const key = trackKey(`${testPrefix}/test-unicode.md`);
             const content = '# 日本語テスト\n\nこんにちは世界 🌍';
 
@@ -201,8 +160,6 @@ describe('S3 Integration Tests', () => {
 
     describe('List Objects', () => {
         it('should list objects under a prefix', async () => {
-            if (!hasS3Credentials()) return;
-
             const listPrefix = `${testPrefix}/list-test`;
 
             // Create test files
@@ -234,8 +191,6 @@ describe('S3 Integration Tests', () => {
         });
 
         it('should return empty for non-existent prefix', async () => {
-            if (!hasS3Credentials()) return;
-
             const response = await client.send(new ListObjectsV2Command({
                 Bucket: bucket,
                 Prefix: `${testPrefix}/non-existent-${Date.now()}`,
@@ -247,8 +202,6 @@ describe('S3 Integration Tests', () => {
 
     describe('Delete Operations', () => {
         it('should delete a single file', async () => {
-            if (!hasS3Credentials()) return;
-
             const key = `${testPrefix}/delete-single.txt`;
 
             // Create
@@ -274,8 +227,6 @@ describe('S3 Integration Tests', () => {
         });
 
         it('should delete multiple files', async () => {
-            if (!hasS3Credentials()) return;
-
             const keys = [
                 `${testPrefix}/batch-delete/file1.txt`,
                 `${testPrefix}/batch-delete/file2.txt`,

@@ -20,24 +20,21 @@ import {
     ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import {
+    TestProvider,
     createTestS3Client,
-    hasS3Credentials,
     getS3Config,
     getTestPrefix,
+    describeEachProvider,
 } from '../helpers/s3-test-utils';
 
-describe('Sync Workflow Integration Tests', () => {
+describeEachProvider()('Sync Workflow Integration Tests [$name]', (provider: TestProvider) => {
     let client: S3Client;
     let bucket: string;
     let syncPrefix: string;
 
     beforeAll(() => {
-        if (!hasS3Credentials()) {
-            console.warn('⚠️ S3 credentials not configured, skipping integration tests');
-            return;
-        }
-        client = createTestS3Client();
-        bucket = getS3Config().bucket;
+        client = createTestS3Client(provider);
+        bucket = getS3Config(provider).bucket;
         syncPrefix = getTestPrefix('sync');
     });
 
@@ -70,8 +67,6 @@ describe('Sync Workflow Integration Tests', () => {
          * Verifies files are stored at correct paths under syncPrefix
          */
         it('should store files at correct sync prefix path', async () => {
-            if (!hasS3Credentials()) return;
-
             const localPath = 'Notes/daily/2024-01-01.md';
             const s3Key = `${syncPrefix}/${localPath}`;
             const content = '# Daily Note\n\nThis is a test note.';
@@ -95,8 +90,6 @@ describe('Sync Workflow Integration Tests', () => {
          * Verifies nested folder structure is maintained
          */
         it('should maintain nested folder structure', async () => {
-            if (!hasS3Credentials()) return;
-
             const files = [
                 { path: 'Notes/project-a/readme.md', content: '# Project A' },
                 { path: 'Notes/project-a/tasks.md', content: '# Tasks' },
@@ -123,8 +116,6 @@ describe('Sync Workflow Integration Tests', () => {
          * Verifies sync metadata folder structure
          */
         it('should support sync metadata structure', async () => {
-            if (!hasS3Credentials()) return;
-
             const metadataPrefix = `${syncPrefix}/.obsidian-s3-sync`;
 
             // Journal file
@@ -156,8 +147,6 @@ describe('Sync Workflow Integration Tests', () => {
 
     describe('Upload Workflow', () => {
         it('should complete upload workflow: create → verify → content match', async () => {
-            if (!hasS3Credentials()) return;
-
             const localPath = 'workflow-test/upload-test.md';
             const s3Key = `${syncPrefix}/${localPath}`;
             const content = '# Upload Test\n\n' + new Date().toISOString();
@@ -188,8 +177,6 @@ describe('Sync Workflow Integration Tests', () => {
 
     describe('Conflict Simulation', () => {
         it('should support conflict file naming convention', async () => {
-            if (!hasS3Credentials()) return;
-
             const basePath = 'conflict-test/document.md';
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 

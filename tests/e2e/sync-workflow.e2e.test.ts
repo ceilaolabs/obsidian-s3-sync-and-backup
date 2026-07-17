@@ -14,13 +14,14 @@ import {
 	cleanupS3Prefix,
 	createDevice,
 	generateTestPrefix,
-	hasS3Credentials,
+	describeEachProvider,
 	initDevice,
 	teardownDevice,
 	type E2EDevice,
+	type TestProvider,
 } from './helpers/e2e-harness';
 
-const describeIfS3 = hasS3Credentials() ? describe : describe.skip;
+const describeEach = describeEachProvider();
 
 /**
  * Builds the metadata required for a direct-to-S3 upload that the sync planner
@@ -56,13 +57,13 @@ function getRequiredVaultFile(device: E2EDevice, path: string): TFile {
  * Covers the single-device sync pipeline against real S3 for create, update,
  * delete, exclusion, and binary-file workflows.
  */
-describeIfS3('Sync workflow E2E tests', () => {
+describeEach('Sync workflow E2E tests [$name]', (provider: TestProvider) => {
 	let device: E2EDevice;
 	let testPrefix: string;
 
 	beforeAll(async () => {
 		testPrefix = generateTestPrefix('sync');
-		device = createDevice({ testPrefix });
+		device = createDevice({ provider, testPrefix });
 		await initDevice(device);
 	});
 

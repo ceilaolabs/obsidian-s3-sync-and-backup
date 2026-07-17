@@ -12,6 +12,7 @@ import {
     buildS3ClientConfig,
     validateConnectionSettings,
     getProviderDisplayName,
+    providerSupportsConditionalWrites,
 } from '../../src/storage/S3Config';
 import { S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../../src/types';
 
@@ -81,6 +82,28 @@ describe('S3Config', () => {
         });
 
         /**
+         * Backblaze B2 exposes a regional S3-compatible endpoint
+         */
+        it('should return endpoint for B2 provider', () => {
+            const settings = createTestSettings({
+                provider: 'b2',
+                endpoint: 'https://s3.us-west-004.backblazeb2.com',
+            });
+            expect(getEndpointForProvider(settings)).toBe('https://s3.us-west-004.backblazeb2.com');
+        });
+
+        /**
+         * B2 without endpoint should throw error
+         */
+        it('should throw error for B2 without endpoint', () => {
+            const settings = createTestSettings({
+                provider: 'b2',
+                endpoint: '',
+            });
+            expect(() => getEndpointForProvider(settings)).toThrow('Backblaze B2 requires an endpoint URL');
+        });
+
+        /**
          * RustFS requires a custom endpoint URL (typically localhost:9000)
          */
         it('should return endpoint for RustFS provider', () => {
@@ -139,6 +162,14 @@ describe('S3Config', () => {
          */
         it('should return true for R2', () => {
             const settings = createTestSettings({ provider: 'r2' });
+            expect(shouldForcePathStyle(settings)).toBe(true);
+        });
+
+        /**
+         * B2 works better with path-style (reliable across bucket names)
+         */
+        it('should return true for B2', () => {
+            const settings = createTestSettings({ provider: 'b2' });
             expect(shouldForcePathStyle(settings)).toBe(true);
         });
 
@@ -234,6 +265,22 @@ describe('S3Config', () => {
 
             expect(config.region).toBe('auto');
         });
+
+        /**
+         * Portability guard: the AWS SDK defaults `requestChecksumCalculation` to
+         * `'WHEN_SUPPORTED'` since v3.729.0, attaching `x-amz-checksum-*` headers
+         * that AWS documents some third-party S3-compatible services reject.
+         * `buildS3ClientConfig` must pin both checksum knobs to `'WHEN_REQUIRED'`
+         * so uploads stay portable. This applies to every provider, so AWS is a
+         * sufficient sample. (The confirmed Backblaze B2 blocker in issue #78 was
+         * conditional writes, covered separately in S3Provider.)
+         */
+        it('should disable default request/response checksums for portability', () => {
+            const config = buildS3ClientConfig(createTestSettings({ provider: 'aws' }));
+
+            expect(config.requestChecksumCalculation).toBe('WHEN_REQUIRED');
+            expect(config.responseChecksumValidation).toBe('WHEN_REQUIRED');
+        });
     });
 
     describe('validateConnectionSettings', () => {
@@ -283,6 +330,18 @@ describe('S3Config', () => {
             });
             const errors = validateConnectionSettings(settings);
             expect(errors).toContain('Cloudflare R2 requires an endpoint URL');
+        });
+
+        /**
+         * B2 without endpoint should be caught
+         */
+        it('should return error for B2 without endpoint', () => {
+            const settings = createTestSettings({
+                provider: 'b2',
+                endpoint: '',
+            });
+            const errors = validateConnectionSettings(settings);
+            expect(errors).toContain('Backblaze B2 requires an endpoint URL');
         });
 
         /**
@@ -385,6 +444,10 @@ describe('S3Config', () => {
             expect(getProviderDisplayName('r2')).toBe('Cloudflare R2');
         });
 
+        it('should return correct display name for B2', () => {
+            expect(getProviderDisplayName('b2')).toBe('Backblaze B2');
+        });
+
         it('should return correct display name for other S3-compatible', () => {
             expect(getProviderDisplayName('custom')).toBe('Other S3-compatible');
         });
@@ -399,6 +462,24 @@ describe('S3Config', () => {
     });
 
     /**
+     * B2 lacks conditional PutObject; every other provider supports it. The sync
+     * engine relies on this flag to decide between native conditional headers and
+     * the HeadObject emulation in S3Provider.uploadFile.
+     */
+    describe('providerSupportsConditionalWrites', () => {
+        it('returns false for Backblaze B2', () => {
+            expect(providerSupportsConditionalWrites('b2')).toBe(false);
+        });
+
+        it('returns true for AWS, R2, RustFS, and custom', () => {
+            expect(providerSupportsConditionalWrites('aws')).toBe(true);
+            expect(providerSupportsConditionalWrites('r2')).toBe(true);
+            expect(providerSupportsConditionalWrites('rustfs')).toBe(true);
+            expect(providerSupportsConditionalWrites('custom')).toBe(true);
+        });
+    });
+
+    /**
      * The settings dropdown is rendered by iterating `Object.entries(S3_PROVIDER_NAMES)`
      * (see `src/settings.ts`). For non-integer string keys, JavaScript guarantees
      * iteration in insertion order, so the order in which entries are declared
@@ -407,7 +488,7 @@ describe('S3Config', () => {
      */
     describe('S3_PROVIDER_NAMES dropdown order', () => {
         it('exposes providers in the documented dropdown order', () => {
-            expect(Object.keys(S3_PROVIDER_NAMES)).toEqual(['aws', 'r2', 'rustfs', 'custom']);
+            expect(Object.keys(S3_PROVIDER_NAMES)).toEqual(['aws', 'r2', 'b2', 'rustfs', 'custom']);
         });
     });
 });

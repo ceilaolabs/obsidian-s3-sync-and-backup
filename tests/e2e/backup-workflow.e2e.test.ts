@@ -14,19 +14,20 @@ import {
 	cleanupS3Prefix,
 	createDevice,
 	generateTestPrefix,
-	hasS3Credentials,
+	describeEachProvider,
 	initDevice,
 	teardownDevice,
 	type CreateDeviceOptions,
 	type E2EDevice,
+	type TestProvider,
 } from './helpers/e2e-harness';
 
-const describeIfS3 = hasS3Credentials() ? describe : describe.skip;
+const describeEach = describeEachProvider();
 
 /**
  * Create isolated E2E devices and clean up every generated S3 prefix.
  */
-describeIfS3('Backup workflow E2E', () => {
+describeEach('Backup workflow E2E [$name]', (provider: TestProvider) => {
 	let activeDevices: E2EDevice[] = [];
 	let cleanupTargets: Array<{ device: E2EDevice; prefixes: string[] }> = [];
 
@@ -34,10 +35,11 @@ describeIfS3('Backup workflow E2E', () => {
 	 * Create a fully initialized device with a unique S3 prefix for one scenario.
 	 */
 	async function createInitializedDevice(
-		overrides: Omit<CreateDeviceOptions, 'testPrefix'> = {},
+		overrides: Omit<CreateDeviceOptions, 'testPrefix' | 'provider'> = {},
 	): Promise<E2EDevice> {
 		const testPrefix = generateTestPrefix('backup-workflow');
 		const device = createDevice({
+			provider,
 			testPrefix,
 			...overrides,
 		});
