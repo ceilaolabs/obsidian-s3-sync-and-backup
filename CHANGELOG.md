@@ -1,5 +1,31 @@
 # Changelog
 
+## [4.2.0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.1.2...4.2.0) (2026-07-17)
+
+
+### Features
+
+* **storage:** add Backblaze B2 provider and fix S3 compatibility ([#78](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues/78)) ([7ed01ae](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/7ed01ae4656de048d6477667ebfc8e2b63580fea))
+* **storage:** Backblaze B2 compatibility + multi-provider test suite (CLO-10, [#78](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues/78)) ([300f368](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/300f36825ce3666d857c70d7a714c5b1a99d3f12))
+
+
+### Documentation
+
+* document Backblaze B2 provider and per-provider test setup ([0e16225](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/0e16225aea28e97f95656fabecc495d18b107fe0))
+
+
+### Miscellaneous
+
+* **deps-dev:** bump esbuild ([738a527](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/738a52792692d657622c4aa5b105bbdf5e9eb439))
+* **deps-dev:** bump esbuild from 0.25.5 to 0.28.1 in the npm_and_yarn group across 1 directory ([66eab58](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/66eab587869ede4bd8b6d9ffe9d69f841ff47f81))
+* **deps-dev:** bump ws from 8.20.0 to 8.21.1 in the npm_and_yarn group across 1 directory ([baa59ae](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/baa59ae0a63dd53f6f581b70eb67563b19d5e609))
+* **deps-dev:** bump ws in the npm_and_yarn group across 1 directory ([b1f0e41](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/b1f0e41658c227e896413aa945d5afcc2604a644))
+
+
+### Tests
+
+* **storage:** run integration & e2e suites per provider + B2 coverage ([e0583b1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/e0583b11bb6ce359f041ecf22ef2489fd0a9cf92))
+
 ## [4.1.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.1.1...4.1.2) (2026-05-29)
 
 
