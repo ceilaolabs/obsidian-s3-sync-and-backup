@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.2.1...4.2.2) (2026-08-17)
+
+
+### Miscellaneous
+
+* **deps:** bump the npm_and_yarn group across 1 directory with 2 updates ([018fb0c](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/018fb0c89f82c0b9fc3d7bfcb7a690e0a74afdf2))
+* **deps:** bump the npm_and_yarn group across 1 directory with 2 updates ([31dcde0](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/commit/31dcde0eb1ee80aa3c705af3c228e5cd8954f934))
+
 ## [4.2.1](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.2.0...4.2.1) (2026-07-27)
 
 
